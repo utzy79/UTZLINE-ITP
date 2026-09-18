@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <!--
-  UTZLINE ITP -- Complete Standalone Application Shell (v2).
-  Integrates a multi-touch viewport layout engine with form tracking fields.
+  UTZLINE ITP -- Complete Standalone Application Shell.
+  Fully Restored Core Architecture with Integrated Level Plan Canvas Component.
 -->
 <title>UTZLINE ITP</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="manifest" href="./manifest.json?v=v2">
 <meta name="theme-color" content="#0d1411">
-<link rel="icon" type="image/png" sizes="512x512" href="./icons/icon-512.png?v=v2">
+<link class="brand-icon" type="image/png" sizes="512x512" href="./icons/icon-512.png?v=v2">
 <link rel="apple-touch-icon" href="./icons/icon-192.png?v=v2">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -114,20 +114,32 @@ p.hint{ font-size:13px; color:var(--text-secondary); margin:0 0 16px; line-heigh
 .list-row .row-title{ font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .list-row .row-sub{ font-size:12px; color:var(--text-secondary); margin-top:2px; }
 .list-row .row-chip{
-  font-size:11px; padding:3px 8px; border-radius:999px; flex:none;
+  font-size:11px; padding:3px 8px; border-radius999px; flex:none;
   border:1px solid var(--border-strong); color:var(--text-secondary);
 }
 .list-row .row-chip.done{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent-ink); }
 .empty-note{ font-size:13px; color:var(--text-secondary); padding:14px 0; }
 
-/* ---- Layout canvas definitions ---- */
-#planViewport{ position: relative; width: 100%; height: 55vh; background: var(--surface-2); overflow: hidden; cursor: grab; }
-#planViewport:active{ cursor: grabbing; }
+/* ---- Layout canvas engine containers ---- */
+#itpPlanContainer{ margin-bottom:18px; border:1px solid var(--border-strong); border-radius:10px; overflow:hidden; background:var(--surface-1); display:none; }
+#planViewport{ position:relative; width:100%; height:50vh; background:var(--surface-2); overflow:hidden; cursor:grab; touch-action:none; }
+#planViewport:active{ cursor:grabbing; }
+#panZoomContainer{ position:absolute; top:0; left:0; transform-origin:0 0; will-change:transform; }
+#planCanvas{ display:block; }
+#vectorOverlay{ position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; }
 
-/* ---- form layout groups ---- */
-.title-block{ border:1px solid var(--border-strong); border-radius:10px; overflow:hidden; margin-bottom:18px; background:var(--surface-1); }
-.title-block .tb-head{ background:var(--surface-2); padding:10px 14px; font-weight:700; font-size:14px; letter-spacing:.03em; }
-.tb-grid{ display:grid; grid-template-columns:1fr 1fr; gap:0; }
+/* ---- title block ---- */
+.title-block{
+  border:1px solid var(--border-strong); border-radius:10px; overflow:hidden;
+  margin-bottom:18px; background:var(--surface-1);
+}
+.title-block .tb-head{
+  background:var(--surface-2); padding:10px 14px; font-weight:700; font-size:14px;
+  letter-spacing:.03em;
+}
+.tb-grid{
+  display:grid; grid-template-columns:1fr 1fr; gap:0;
+}
 .tb-field{ padding:9px 14px; border-top:1px solid var(--border-strong); }
 .tb-field:nth-child(odd){ border-right:1px solid var(--border-strong); }
 .tb-field .tb-label{ font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-secondary); }
@@ -135,18 +147,20 @@ p.hint{ font-size:13px; color:var(--text-secondary); margin:0 0 16px; line-heigh
 .tb-field .tb-value.empty{ color:var(--text-secondary); font-style:italic; }
 @media (max-width:520px){ .tb-grid{ grid-template-columns:1fr; } .tb-field:nth-child(odd){ border-right:none; } }
 
+/* ---- check rows ---- */
 .chk-group{ display:flex; flex-direction:column; gap:12px; margin-bottom:20px; }
 .chk-row{ border:1px solid var(--border-strong); border-radius:10px; background:var(--surface-1); padding:12px; }
 .chk-main{ display:flex; align-items:start; gap:12px; justify-content:space-between; }
 .chk-text{ font-size:14px; line-height:1.4; padding-top:4px; }
 .chk-text small{ display:block; color:var(--text-secondary); font-size:11.5px; margin-top:2px; }
-.chk-selectors{ display:flex; gap:2px; background:var(--surface-0); border:1px solid var(--border-strong); padding:2px; border-radius:8px; flex-none; }
+.chk-selectors{ display:flex; gap:2px; background:var(--surface-0); border:1px solid var(--border-strong); padding:2px; border-radius:8px; flex:none; }
 .sel-btn{ border:none; background:none; font:inherit; font-size:12px; font-weight:600; padding:6px 12px; border-radius:6px; color:var(--text-secondary); cursor:pointer; }
 .sel-btn.active[data-val="Y"]{ background:var(--accent); color:#04140b; }
 .sel-btn.active[data-val="N"]{ background:var(--danger); color:#ffffff; }
 .sel-btn.active[data-val="NA"]{ background:var(--border-strong); color:var(--text-primary); }
 .chk-comment{ width:100%; margin-top:10px; font:inherit; font-size:13px; padding:8px; border-radius:6px; border:1px solid var(--border-strong); background:var(--surface-0); color:var(--text-primary); }
 
+/* ---- signature block ---- */
 .sig-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px; }
 .sig-box{ border:1px solid var(--border-strong); border-radius:10px; background:var(--surface-1); padding:14px; display:flex; flex-direction:column; gap:10px; }
 .sig-label{ font-weight:600; font-size:14px; }
@@ -186,17 +200,8 @@ p.hint{ font-size:13px; color:var(--text-secondary); margin:0 0 16px; line-heigh
     <div class="list" id="browseList"></div>
   </div>
 
-  <!-- SCREEN 3: INTERACTIVE LAYOUT SCREEN (PLAN VIEWPORT) -->
+  <!-- SCREEN 3: PLAN SELECTION & VIEWPORT SCREEN -->
   <div id="screenPlan" class="screen">
     <button class="back-link" id="btnPlanBack">← All levels</button>
     
-    <div id="itpPlanContainer" class="title-block">
-      <div class="tb-head" style="display:flex; align-items:center; justify-content:space-between;">
-        <span id="planContainerTitle">Level Blueprint Viewport</span>
-        <button class="mbtn" id="btnToggleListMode" style="padding:4px 8px; font-size:11px;">View Text List</button>
-      </div>
-      <div id="planViewport">
-        <div id="panZoomContainer">
-          <canvas id="planCanvas"></canvas>
-          <svg id="vectorOverlay"></svg>
-        </div>
+    <!-- LEVEL LAYOUT BLUEPRINT ENGINE VISUALISATION -->
