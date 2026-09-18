@@ -1,249 +1,196 @@
-// ============================================================================
-// UTZLINE ITP NATIVE SCRIPT CONTROLLER (RESTORED & FIXED)
-// ============================================================================
-const QUALITY_QUESTIONS = [
-  "Check carcass items for level, plumb and straight.",
-  "Check doors and drawer fronts for alignment, squareness and spacing.",
-  "Confirm hardware is operational and adjusted correctly.",
-  "Ensure all fixings are secure, flush and hidden where possible.",
-  "Verify benches/tops are level, scribed tightly to wall surfaces.",
-  "Check all silicon and sealant joints are neat and consistent.",
-  "Confirm cut-outs for service installations match dimensions.",
-  "Ensure service drops or cable routing tracks are clean and clear.",
-  "Verify fillers or infill panels are fitted flush with tight reveals.",
-  "Check component fascia layers for scratches, chips or dents.",
-  "Ensure kickboards and plinths run straight without raw edges.",
-  "Verify tracking infrastructure is aligned smoothly.",
-  "Confirm specific safety stops or locking modules latch cleanly.",
-  "Check handles or hardware fittings are straight and anchored firmly.",
-  "Verify that any template panels fit surrounding joins exactly.",
-  "Ensure area is swept, clean and empty of install debris fragments."
-];
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  UTZLINE ITP -- Complete Standalone Application Shell.
+  Fully Restored Web App Structure with Plan Visualisation Support.
+-->
+<title>UTZLINE ITP</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="manifest" href="./manifest.json?v=v2">
+<meta name="theme-color" content="#0d1411">
+<link rel="icon" type="image/png" sizes="512x512" href="./icons/icon-512.png?v=v2">
+<link rel="apple-touch-icon" href="./icons/icon-192.png?v=v2">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="UTZLINE ITP">
 
-const BLANK_CHECKLIST = {
-  version: 2,
-  answers: Array(16).fill(""),
-  comments: Array(16).fill(""),
-  notes: "",
-  subName: "", subDate: "", subSig: "",
-  metroName: "", metroDate: "", metroSig: ""
-};
+<style>
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:500;src:url('./mono.woff2') format('woff2');}
+@font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:500;src:url('./sans.woff2') format('woff2');}
 
-// Core Application States Tracking Flags
-let rootHandle = null;
-let currentProject = null, currentProjectHandle = null;
-let currentLevel = null, currentLevelHandle = null;
-let currentRoom = null, currentRoomHandle = null;
-let currentJoinery = null;
-let activeChecklistData = null;
-let projectMeta = { no: "", name: "", contractor: "" };
-
-// Map Engine Transformations Data Hooks
-let itpPlanImg = null;
-let itpZoom = 1.0;
-let itpPanX = 0, itpPanY = 0;
-let isPanningPlan = false;
-let startPanX = 0, startPanY = 0;
-let levelCanvasLayoutData = null;
-let isListModeOnly = false;
-
-// Universal Interface State Engine Toggler
-function showScreen(id) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  const target = document.getElementById(id);
-  if (target) target.classList.add('active');
-  updateBreadcrumbs();
+:root{
+  --surface-0:#eef0ee;
+  --surface-1:#ffffff;
+  --surface-2:#dde2e0;
+  --border-strong:#aab3af;
+  --text-primary:#1b2422;
+  --text-secondary:#5c6864;
+  --accent:#1f8a4c;
+  --accent-ink:#146a39;
+  --accent-soft:#d9f2e3;
+  --danger:#c8391c;
+  --shadow:0 10px 30px rgba(0,0,0,.18);
 }
-
-function updateBreadcrumbs() {
-  const crumbs = [];
-  if (currentProject) crumbs.push(currentProject);
-  if (currentLevel) crumbs.push(currentLevel);
-  if (currentRoom) crumbs.push(currentRoom);
-  if (currentJoinery) crumbs.push(currentJoinery);
-  const elem = document.getElementById('headerCrumbs');
-  if (elem) elem.textContent = crumbs.join(' / ') || "Select Projects Folder";
-}
-
-// Wire and Mount Touch Signature Capture Fields
-function setupSignaturePad(canvasId, clearId, dateId, saveKey) {
-  const canvas = document.getElementById(canvasId);
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  let drawing = false;
-
-  function resize() {
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = rect.height;
-    ctx.lineWidth = 2.5;
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = '#1b2422';
-    if (activeChecklistData && activeChecklistData[saveKey]) {
-      const img = new Image();
-      img.onload = () => ctx.drawImage(img, 0, 0);
-      img.src = activeChecklistData[saveKey];
-    }
-  }
-  
-  window.addEventListener('resize', resize);
-  setTimeout(resize, 200);
-
-  function getPos(e) {
-    const rect = canvas.getBoundingClientRect();
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    return { x: clientX - rect.left, y: clientY - rect.top };
-  }
-
-  canvas.onmousedown = (e) => { e.preventDefault(); drawing = true; ctx.beginPath(); const p = getPos(e); ctx.moveTo(p.x, p.y); };
-  canvas.onmousemove = (e) => { if (!drawing) return; e.preventDefault(); const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
-  
-  canvas.ontouchstart = (e) => { drawing = true; ctx.beginPath(); const p = getPos(e); ctx.moveTo(p.x, p.y); };
-  canvas.ontouchmove = (e) => { if (!drawing) return; const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
-
-  const stop = () => { if (!drawing) return; drawing = false; activeChecklistData[saveKey] = canvas.toDataURL(); const d = document.getElementById(dateId); if(d && !d.value) { const today = new Date().toLocaleDateString('en-AU'); d.value = today; activeChecklistData[dateId==='sigDateSub'?'subDate':'metroDate']=today; } };
-  window.addEventListener('mouseup', stop);
-  canvas.ontouchend = stop;
-
-  document.getElementById(clearId).onclick = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); activeChecklistData[saveKey] = ""; };
-}
-
-// Build Check Rows Forms Interfaces Dynamically
-function buildChecklistInterface() {
-  const container = document.getElementById('checksContainer');
-  if (!container) return;
-  container.innerHTML = '';
-  
-  QUALITY_QUESTIONS.forEach((q, idx) => {
-    const row = document.createElement('div');
-    row.className = 'chk-row';
-    row.innerHTML = `
-      <div class="chk-main">
-        <div class="chk-text">${idx + 1}. ${q}</div>
-        <div class="chk-selectors" data-idx="${idx}">
-          <button class="sel-btn" data-val="Y">YES</button>
-          <button class="sel-btn" data-val="N">NO</button>
-          <button class="sel-btn" data-val="NA">N/A</button>
-        </div>
-      </div>
-      <input type="text" class="chk-comment" data-idx="${idx}" placeholder="Add check notes or comment remarks..." value="">
-    `;
-    container.appendChild(row);
-  });
-
-  container.querySelectorAll('.sel-btn').forEach(btn => {
-    btn.onclick = function() {
-      const p = this.parentElement;
-      const idx = parseInt(p.getAttribute('data-idx'));
-      const val = this.getAttribute('data-val');
-      p.querySelectorAll('.sel-btn').forEach(b => b.classList.remove('active'));
-      this.classList.add('active');
-      activeChecklistData.answers[idx] = val;
-    };
-  });
-
-  container.querySelectorAll('.chk-comment').forEach(input => {
-    input.oninput = function() {
-      const idx = parseInt(this.getAttribute('data-idx'));
-      activeChecklistData.comments[idx] = this.value;
-    };
-  });
-}
-
-// ============================================================================
-// THE COMPACT PAN / ZOOM LAYOUT CANVAS VIEWER LOGIC PIPELINE
-// ============================================================================
-function applyPlanTransform() {
-  const container = document.getElementById('panZoomContainer');
-  if (container) {
-    container.style.transform = `translate(${itpPanX}px, ${itpPanY}px) scale(${itpZoom})`;
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --surface-0:#0d1411;
+    --surface-1:#131b17;
+    --surface-2:#0a100d;
+    --border-strong:#2c3a33;
+    --text-primary:#e9edea;
+    --text-secondary:#93a29a;
+    --accent:#3ddc84;
+    --accent-ink:#b6f5cf;
+    --accent-soft:#163825;
+    --danger:#ff6a5a;
   }
 }
-
-function resetLayoutToFit() {
-  if (!itpPlanImg) return;
-  const vp = document.getElementById('planViewport');
-  const scaleX = vp.clientWidth / itpPlanImg.width;
-  const scaleY = vp.clientHeight / itpPlanImg.height;
-  itpZoom = Math.min(scaleX, scaleY, 1.0);
-  itpPanX = (vp.clientWidth - itpPlanImg.width * itpZoom) / 2;
-  itpPanY = (vp.clientHeight - itpPlanImg.height * itpZoom) / 2;
-  applyPlanTransform();
+:root[data-theme="dark"]{
+  --surface-0:#0d1411;
+  --surface-1:#131b17;
+  --surface-2:#0a100d;
+  --border-strong:#2c3a33;
+  --text-primary:#e9edea;
+  --text-secondary:#93a29a;
+  --accent:#3ddc84;
+  --accent-ink:#b6f5cf;
+  --accent-soft:#163825;
+  --danger:#ff6a5a;
 }
-
-function setupLayoutCanvasInteractivity() {
-  const vp = document.getElementById('planViewport');
-  if (!vp) return;
-
-  vp.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    const rect = vp.getBoundingClientRect();
-    const mX = e.clientX - rect.left;
-    const mY = e.clientY - rect.top;
-    const pX = (mX - itpPanX) / itpZoom;
-    const pY = (mY - itpPanY) / itpZoom;
-
-    itpZoom = e.deltaY < 0 ? Math.min(itpZoom * 1.12, 6.0) : Math.max(itpZoom / 1.12, 0.15);
-    itpPanX = mX - pX * itpZoom;
-    itpPanY = mY - pY * itpZoom;
-    applyPlanTransform();
-  }, { passive: false });
-
-  vp.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
-    isPanningPlan = true;
-    startPanX = e.clientX - itpPanX;
-    startPanY = e.clientY - itpPanY;
-  });
-
-  window.addEventListener('mousemove', (e) => {
-    if (!isPanningPlan) return;
-    itpPanX = e.clientX - startPanX;
-    itpPanY = e.clientY - startPanY;
-    applyPlanTransform();
-  });
-
-  window.addEventListener('mouseup', () => { isPanningPlan = false; });
-
-  vp.addEventListener('touchstart', (e) => {
-    if (e.touches.length === 1) {
-      isPanningPlan = true;
-      startPanX = e.touches[0].clientX - itpPanX;
-      startPanY = e.touches[0].clientY - itpPanY;
-    }
-  });
-  vp.addEventListener('touchmove', (e) => {
-    if (!isPanningPlan || e.touches.length !== 1) return;
-    itpPanX = e.touches[0].clientX - startPanX;
-    itpPanY = e.touches[0].clientY - startPanY;
-    applyPlanTransform();
-  });
-  vp.addEventListener('touchend', () => { isPanningPlan = false; });
-
-  const zoomIn = document.getElementById('zoomInBtn');
-  const zoomOut = document.getElementById('zoomOutBtn');
-  if(zoomIn) zoomIn.onclick = () => { itpZoom = Math.min(itpZoom * 1.3, 6.0); applyPlanTransform(); };
-  if(zoomOut) zoomOut.onclick = () => { itpZoom = Math.max(itpZoom / 1.3, 0.15); applyPlanTransform(); };
+*{box-sizing:border-box;}
+html,body{margin:0; padding:0; height:100%;}
+body{
+  font-family:'IBM Plex Sans',Arial,sans-serif;
+  background:var(--surface-0); color:var(--text-primary);
+  display:flex; flex-direction:column; min-height:100%;
 }
+button{font-family:inherit;}
+header{
+  display:flex; align-items:center; gap:10px;
+  padding:12px 16px; border-bottom:1px solid var(--border-strong);
+  background:var(--surface-1); position:sticky; top:0; z-index:20;
+}
+header .brand-icon{ width:28px; height:28px; border-radius:6px; flex:none; }
+header .brand-text{ font-weight:700; letter-spacing:.02em; font-size:16px; }
+header .brand-text b{ color:var(--accent); }
+header .crumbs{
+  margin-left:auto; font-size:12px; color:var(--text-secondary);
+  font-family:'IBM Plex Mono',monospace; text-align:right; max-width:60%;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+main{ flex:1; padding:16px; max-width:820px; width:100%; margin:0 auto; }
+.screen{ display:none; }
+.screen.active{ display:block; }
+h2{ font-size:17px; margin:0 0 4px; }
+p.hint{ font-size:13px; color:var(--text-secondary); margin:0 0 16px; line-height:1.5; }
+.mbtn{
+  font:inherit; font-size:13.5px; padding:9px 14px; border-radius:8px;
+  border:1px solid var(--border-strong); background:var(--surface-1);
+  color:var(--text-primary); cursor:pointer;
+}
+.mbtn:hover{ background:var(--surface-2); }
+.mbtn-accent{ background:var(--accent); border-color:var(--accent-ink); color:#04140b; font-weight:600; }
+.mbtn-accent:hover{ filter:brightness(1.08); }
+.mbtn-danger{ color:var(--danger); border-color:var(--danger); }
+.mbtn[disabled]{ opacity:.5; cursor:default; }
+.actions-row{ display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+.back-link{
+  background:none; border:none; color:var(--text-secondary); cursor:pointer;
+  font:inherit; font-size:13px; padding:4px 0 14px; display:block;
+}
+.back-link:hover{ color:var(--text-primary); }
+.list{ display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
+.list-row{
+  display:flex; align-items:center; gap:10px; width:100%;
+  padding:12px 14px; border-radius:9px; border:1px solid var(--border-strong);
+  background:var(--surface-1); color:var(--text-primary); cursor:pointer;
+  font:inherit; font-size:14px; text-align:left;
+}
+.list-row:hover{ border-color:var(--accent); }
+.list-row .row-main{ flex:1; min-width:0; }
+.list-row .row-title{ font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.list-row .row-sub{ font-size:12px; color:var(--text-secondary); margin-top:2px; }
+.list-row .row-chip{
+  font-size:11px; padding:3px 8px; border-radius:999px; flex:none;
+  border:1px solid var(--border-strong); color:var(--text-secondary);
+}
+.list-row .row-chip.done{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent-ink); }
+.empty-note{ font-size:13px; color:var(--text-secondary); padding:14px 0; }
 
-function renderPlanInteractivePins() {
-  const svg = document.getElementById('vectorOverlay');
-  if (!svg || !itpPlanImg || !levelCanvasLayoutData || !levelCanvasLayoutData.annotations) return;
+/* ---- Map Canvas UI Layout Styling Styles ---- */
+#itpPlanContainer{ margin-bottom:18px; border:1px solid var(--border-strong); border-radius:10px; overflow:hidden; background:var(--surface-1); display:none; }
+#planViewport{ position:relative; width:100%; height:45vh; background:var(--surface-2); overflow:hidden; cursor:grab; touch-action:none; }
+#planViewport:active{ cursor:grabbing; }
+#panZoomContainer{ position:absolute; top:0; left:0; transform-origin:0 0; will-change:transform; }
+#planCanvas{ display:block; }
+#vectorOverlay{ position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; }
 
-  svg.innerHTML = '';
-  svg.setAttribute('viewBox', `0 0 ${itpPlanImg.width} ${itpPlanImg.height}`);
+/* ---- Form Tables styling blocks ---- */
+.title-block{ border:1px solid var(--border-strong); border-radius:10px; overflow:hidden; margin-bottom:18px; background:var(--surface-1); }
+.title-block .tb-head{ background:var(--surface-2); padding:10px 14px; font-weight:700; font-size:14px; letter-spacing:.03em; }
+.tb-grid{ display:grid; grid-template-columns:1fr 1fr; gap:0; }
+.tb-field{ padding:9px 14px; border-top:1px solid var(--border-strong); }
+.tb-field:nth-child(odd){ border-right:1px solid var(--border-strong); }
+.tb-field .tb-label{ font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-secondary); }
+.tb-field .tb-value{ font-size:13.5px; margin-top:2px; word-break:break-word; }
+.tb-field .tb-value.empty{ color:var(--text-secondary); font-style:italic; }
+@media (max-width:520px){ .tb-grid{ grid-template-columns:1fr; } .tb-field:nth-child(odd){ border-right:none; } }
 
-  levelCanvasLayoutData.annotations.forEach(node => {
-    if (node.roomLink || node.roomName || node.joineryCode) {
-      const pin = document.createElementNS('http://w3.org', 'circle');
-      pin.setAttribute('cx', node.x);
-      pin.setAttribute('cy', node.y);
-      pin.setAttribute('r', '22');
-      pin.setAttribute('fill', '#1f8a4c');
-      pin.setAttribute('stroke', '#ffffff');
-      pin.setAttribute('stroke-width', '4');
-      pin.setAttribute('style', 'cursor: pointer; pointer-events: auto; opacity: 0.9;');
+.chk-group{ display:flex; flex-direction:column; gap:12px; margin-bottom:20px; }
+.chk-row{ border:1px solid var(--border-strong); border-radius:10px; background:var(--surface-1); padding:12px; }
+.chk-main{ display:flex; align-items:start; gap:12px; justify-content:space-between; }
+.chk-text{ font-size:14px; line-height:1.4; padding-top:4px; }
+.chk-text small{ display:block; color:var(--text-secondary); font-size:11.5px; margin-top:2px; }
+.chk-selectors{ display:flex; gap:2px; background:var(--surface-0); border:1px solid var(--border-strong); padding:2px; border-radius:8px; flex:none; }
+.sel-btn{ border:none; background:none; font:inherit; font-size:12px; font-weight:600; padding:6px 12px; border-radius:6px; color:var(--text-secondary); cursor:pointer; }
+.sel-btn.active[data-val="Y"]{ background:var(--accent); color:#04140b; }
+.sel-btn.active[data-val="N"]{ background:var(--danger); color:#ffffff; }
+.sel-btn.active[data-val="NA"]{ background:var(--border-strong); color:var(--text-primary); }
+.chk-comment{ width:100%; margin-top:10px; font:inherit; font-size:13px; padding:8px; border-radius:6px; border:1px solid var(--border-strong); background:var(--surface-0); color:var(--text-primary); }
 
-      pin.onclick = async (e) => {
-        e.stopPropagation();
+.sig-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px; }
+.sig-box{ border:1px solid var(--border-strong); border-radius:10px; background:var(--surface-1); padding:14px; display:flex; flex-direction:column; gap:10px; }
+.sig-label{ font-weight:600; font-size:14px; }
+.sig-input{ width:100%; font:inherit; font-size:13.5px; padding:8px 10px; border-radius:6px; border:1px solid var(--border-strong); background:var(--surface-0); color:var(--text-primary); }
+.sig-canvas-wrapper{ position:relative; width:100%; padding-top:50%; border:1px dashed var(--border-strong); border-radius:8px; background:var(--surface-0); overflow:hidden; }
+.sig-canvas-wrapper canvas{ position:absolute; inset:0; width:100%; height:100%; display:block; cursor:crosshair; }
+@media (max-width:600px){ .sig-grid{ grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+
+<header>
+  <svg class="brand-icon" viewBox="0 0 100 100" style="background:#146a39; padding:5px;">
+    <path d="M20 25 L40 75 L60 25 L80 75" fill="none" stroke="#b6f5cf" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <div class="brand-text">UTZLINE <b>ITP</b></div>
+  <div class="crumbs" id="headerCrumbs">Select Projects Folder</div>
+</header>
+
+<main>
+  <!-- SCREEN 1: DISK PERMISSION GRANTED ENTRY -->
+  <div id="screenPicker" class="screen active">
+    <h2>Choose your Projects folder</h2>
+    <p class="hint">Point this selector at the same root Projects directory shared with Site Measure and the Viewer app.</p>
+    <button class="mbtn mbtn-accent" id="btnBrowse">Choose Projects Folder</button>
+  </div>
+
+  <!-- SCREEN 2: MAIN EXPLORER DIRECTORY BROWSING -->
+  <div id="screenBrowse" class="screen">
+    <button class="back-link" id="btnBrowseBack">← Back</button>
+    <h2 id="browseTitle">Projects</h2>
+    <p class="hint" id="browseHint">Select an active folder asset node to mount target contents.</p>
+    <div class="list" id="browseList"></div>
+  </div>
+
+  <!-- SCREEN 3: PLAN COMPONENT VISUALISATION STAGE -->
+  <div id="screenPlan" class="screen">
+    <button class="back-link" id="btnPlanBack">← All levels</button>
+    
+    <!-- LEVEL LAYOUT CANVAS WRAPPER INTERFACE HOOK -->
+    <div id="itpPlanContainer">
+      <div class="tb-head" style="display:flex; align-items:center; justify-content:space-between;">
+        <span>Level Layout Blueprint</span>
