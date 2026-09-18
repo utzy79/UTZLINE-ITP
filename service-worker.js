@@ -32,9 +32,18 @@
 // UTZLINE ITP's own brand mark prints bottom-right on every page. The
 // checklist's Back button now asks to save/discard/cancel when there's a
 // real unsaved edit, same three-way dialog as the other two apps.)
+//
+// (v3, 2026-09-18: BUG FIX -- the new Level Plan screen (v2) never showed a
+// plan at all, on any level, always falling back to the room list. Root
+// cause: it only recognised a level's base photo saved as one single
+// imageDataURL string; a large plan (e.g. a big CAD-exported fitout scan)
+// is saved by Site Measure as a set of stitched image tiles instead, which
+// is the normal case for real architectural plans, not an edge case -- so
+// loadLevelPlan()/renderLevelPlanScreen() now render tiled plans too, the
+// same way Site Measure and the Viewer already do.)
 
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v2";
+var CACHE_NAME = "utzline-itp-cache-v3";
 
 var PRECACHE_URLS = [
   "./",
