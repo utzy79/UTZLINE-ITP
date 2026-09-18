@@ -80,9 +80,9 @@ separate, independent apps from one repo:
 
 1. In the `UTZLINE-Site-Measure` repo, add everything from this folder
    under an
-   [`itp-reports/`](https://github.com/utzy79/UTZLINE-Site-Measure/tree/main/itp-reports)
+   [`itp-reports/`](https://utzy79.github.io/UTZLINE-ITP/)
    subfolder — so it ends up live at
-   [`https://utzy79.github.io/UTZLINE-Site-Measure/itp-reports/`](https://utzy79.github.io/UTZLINE-Site-Measure/itp-reports/).
+   [`https://utzy79.github.io/UTZLINE-Site-Measure/itp-reports/`](https://utzy79.github.io/UTZLINE-ITP/).
    Keep the `icons/` folder structure intact.
 2. Open that URL once in a normal browser tab while online, so the
    service worker can cache it for offline use.
