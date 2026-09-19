@@ -71,8 +71,37 @@
 // naming race -- tucked instead under a collapsed "N sync-duplicate files
 // found" toggle that can still be expanded and opened for review.)
 
+// (v6, 2026-09-19: four PDF export improvements Andrew asked for in one
+// note. (1) "N/A on the itp i want to be blue" -- the on-screen N/A
+// tri-button now uses a new blue --info color instead of a neutral grey
+// (new :root/dark-theme tokens --info/--info-ink/--info-soft). (2) "the itp
+// exort forms need gridlines for na / no / yes ... make the itp export
+// look more like the app" -- the checklist table now draws real vertical
+// gridlines between every column on every row (previously just one outer
+// box per row, no internal dividers), and the selected Yes/No/N-A cell
+// gets a light tint of that same status's color (green/red/blue) with the
+// "X" drawn in its ink color, echoing the on-screen tri-buttons instead of
+// a plain black "X" regardless of status. (3) "bottom signatures on the
+// exports to be side by side to save space" -- the two sign-off blocks
+// (installer/supervisor) now share one row of two half-width columns
+// instead of each taking a full-width row; each column stacks its own
+// label/Name/Date above its own (now slightly smaller) signature box,
+// since a half-width column doesn't have room to put the text and the
+// signature box side by side the way the old full-width layout did. (4)
+// "both company and utzline logos on the exports are low resolution
+// unreadable" -- UTZLINE ITP's own baked-in brand mark was only a 96x96
+// source PNG; v36/ITP v4 doubled its PDF footprint (24px -> 48pt) without
+// a matching resolution bump, so it was being upscaled and looked
+// pixelated. Re-exported at 256x256 from the same icon-512.png artwork
+// this app's own icon set already uses. The company logo is a per-device
+// upload (Projects screen "Insert logo"), so its crispness depends on the
+// resolution of whatever file was uploaded -- this app already never
+// upscales it beyond its own natural pixel size, so if it still looks
+// soft, re-uploading a higher-resolution version of that same file is what
+// actually fixes it, not a code change here.)
+
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v5";
+var CACHE_NAME = "utzline-itp-cache-v6";
 
 var PRECACHE_URLS = [
   "./",

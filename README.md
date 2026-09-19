@@ -1,5 +1,7 @@
 # UTZLINE ITP — installable app
 
+**Current version: v6** (its own independent version line, separate from Site Measure/Viewer's — bump this line every time a new build ships.)
+
 This folder is the self-contained, installable **UTZLINE ITP** app —
 a third app in the same family as **UTZLINE Site Measure** (the editor)
 and **UTZLINE Viewer** (the read-only browser), for filling in and
