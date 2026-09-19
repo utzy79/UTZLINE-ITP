@@ -41,9 +41,22 @@
 // is the normal case for real architectural plans, not an edge case -- so
 // loadLevelPlan()/renderLevelPlanScreen() now render tiled plans too, the
 // same way Site Measure and the Viewer already do.)
+//
+// (v4, 2026-09-19: two adjustments Andrew asked for. (1) "make the viewer
+// larger in the itp app, same as the viewer app" -- the Level Plan screen
+// now goes full-viewport, edge-to-edge below a slim top bar, instead of a
+// fixed 60vh box sitting in a narrow, padded, centered column. (2) the
+// exported PDF's logos: both the company logo and UTZLINE ITP's own brand
+// mark are now 2x their previous size and sit together at the TOP of every
+// page -- company logo on the left, UTZLINE on the right -- instead of
+// company-logo-top-right-on-page-1-only plus UTZLINE-bottom-right-on-every-
+// page. The company logo is still set per device via "Insert logo" on the
+// Projects screen; Andrew separately asked for it to be baked into the app
+// the same way the UTZLINE mark already is, which needs his actual logo
+// file to embed -- see the reply for what's needed to finish that part.)
 
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v3";
+var CACHE_NAME = "utzline-itp-cache-v4";
 
 var PRECACHE_URLS = [
   "./",

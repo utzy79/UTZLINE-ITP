@@ -241,11 +241,29 @@ textarea.notes-box{
   background:var(--surface-1); max-width:420px; margin:40px auto 0;
 }
 
-/* ---- level plan viewer (photo + room markers only, no measurements) ---- */
+/* ---- level plan viewer (photo + room markers only, no measurements) ----
+   Andrew, 2026-09-19: "make the viewer larger in the itp app, same as the
+   viewer app" -- Site Measure/the Viewer show their canvas edge-to-edge,
+   filling the whole screen below a slim toolbar, not boxed into a narrow
+   centered column. This screen now does the same: while it's the active
+   screen, <body> gets a "plan-fullscreen" class (set in showScreen()) that
+   drops <main>'s max-width/padding and gives the plan viewport every pixel
+   of height the viewport isn't using for the slim top bar, instead of the
+   old fixed 60vh box sitting in the middle of a padded, width-capped page. */
+body.plan-fullscreen{ height:100dvh; overflow:hidden; }
+body.plan-fullscreen main{ max-width:none; width:100%; padding:0; margin:0; display:flex; flex-direction:column; min-height:0; flex:1; }
+body.plan-fullscreen #screenLevelPlan.active{ display:flex; flex-direction:column; flex:1; min-height:0; }
+.plan-topbar{ display:flex; align-items:center; gap:10px; padding:10px 16px 0; flex:none; }
+.plan-topbar .back-link{ padding:4px 0; flex:none; }
+.plan-topbar h2{ margin:0; }
 .plan-viewport{
   position:relative; width:100%; height:60vh; min-height:320px;
   border:1px solid var(--border-strong); border-radius:10px; overflow:hidden;
-  background:var(--surface-2); margin-bottom:6px; touch-action:none;
+  background:var(--surface-2); margin:10px 0 6px; touch-action:none;
+}
+body.plan-fullscreen .plan-viewport{
+  flex:1; min-height:0; height:auto; margin:8px 0 0; border-radius:0;
+  border-left:none; border-right:none; border-bottom:none;
 }
 #levelPlanSvg{ width:100%; height:100%; display:block; cursor:grab; }
 #levelPlanSvg:active{ cursor:grabbing; }
@@ -260,6 +278,12 @@ textarea.notes-box{
   padding:0;
 }
 .plan-fit-btn{ font-size:15px; }
+.plan-rooms-btn{
+  position:absolute; left:10px; top:10px; z-index:5;
+  font:inherit; font-size:12.5px; padding:7px 12px; border-radius:999px;
+  border:1px solid var(--border-strong); background:var(--surface-1); color:var(--text-primary);
+  cursor:pointer; box-shadow:var(--shadow);
+}
 .plan-loading-note, .plan-empty-note{
   position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
   padding:24px; text-align:center; font-size:13px; color:var(--text-secondary);
@@ -367,9 +391,10 @@ textarea.notes-box{
        Site Measure left out -- only the base photo and the room markers
        themselves are ever rendered here. ---- -->
   <div class="screen" id="screenLevelPlan">
-    <button type="button" class="back-link" id="backToLevelsFromPlanBtn">← All levels</button>
-    <h2 id="levelPlanHeading"></h2>
-    <p class="hint">Drag to look around, pinch or scroll to zoom, and tap a room marker to open it.</p>
+    <div class="plan-topbar">
+      <button type="button" class="back-link" id="backToLevelsFromPlanBtn">← All levels</button>
+      <h2 id="levelPlanHeading"></h2>
+    </div>
     <div class="plan-viewport" id="planViewportEl">
       <svg id="levelPlanSvg">
         <g id="levelPlanWorld">
@@ -378,13 +403,13 @@ textarea.notes-box{
           <g id="levelPlanMarkers"></g>
         </g>
       </svg>
+      <button type="button" class="plan-rooms-btn" id="planViewRoomListBtn">Room list</button>
       <div class="plan-zoom-controls">
         <button type="button" class="plan-zoom-btn" id="planZoomInBtn" aria-label="Zoom in">+</button>
         <button type="button" class="plan-zoom-btn" id="planZoomOutBtn" aria-label="Zoom out">&minus;</button>
         <button type="button" class="plan-zoom-btn plan-fit-btn" id="planFitBtn" aria-label="Fit to screen" title="Fit to screen">&#10530;</button>
       </div>
     </div>
-    <div class="actions-row"><button class="mbtn" id="planViewRoomListBtn">View room list instead</button></div>
   </div>
 
   <!-- ---- Room list ---- -->
@@ -637,6 +662,12 @@ textarea.notes-box{
   });
   function showScreen(name){
     Object.keys(screens).forEach(function(n){ screens[n].classList.toggle("active", n === name); });
+    // Level Plan goes full-viewport, edge-to-edge, same as Site Measure/the
+    // Viewer's own canvas -- see the "plan-fullscreen" CSS block for why.
+    // Toggled synchronously, before renderLevelPlanScreen's own queued
+    // requestAnimationFrame(fitPlanView) fires, so that fit always measures
+    // the final full-screen layout, not the boxed-in one.
+    document.body.classList.toggle("plan-fullscreen", name === "LevelPlan");
     window.scrollTo(0, 0);
   }
   var crumbsEl = document.getElementById("crumbsEl");
@@ -1733,22 +1764,27 @@ textarea.notes-box{
     var pageH = doc.internal.pageSize.getHeight();
     var margin = 36;
     var contentW = pageW - margin * 2;
-    var y = margin;
 
-    // ---- company logo, top-right of page 1 only (Andrew, 2026-09-18) ----
-    // Fit within a small box, preserving aspect ratio -- never upscale a
-    // small logo (scale capped at 1). Pushes the title/divider down only
-    // as far as the logo actually needs, so a short, wide logo barely
-    // changes the layout while a tall one gets proper clearance.
+    // ---- both logos, top of EVERY page -- company logo on the left,
+    // UTZLINE ITP's own brand mark on the right (Andrew, 2026-09-19: "maybe
+    // they both go at the top. Company logo on the left utzline on the
+    // right", also asking for both 2x the previous size). Actual drawing
+    // happens in the stampLogosOnEveryPage() post-processing pass below
+    // (same technique the brand mark already used) since it needs to touch
+    // every page, including ones added after this point -- but the SIZE is
+    // computed here, up front, because every page's own content needs to
+    // start below this band, not just page 1's.
+    var companyLogoW = 0, companyLogoH = 0;
     if (state.companyLogoDataUrl && state.companyLogoW > 0 && state.companyLogoH > 0){
-      var maxLogoW = 90, maxLogoH = 46;
+      var maxLogoW = 180, maxLogoH = 92; // 2x the original 90x46 box
       var logoScale = Math.min(maxLogoW / state.companyLogoW, maxLogoH / state.companyLogoH, 1);
-      var logoW = state.companyLogoW * logoScale, logoH = state.companyLogoH * logoScale;
-      try{
-        doc.addImage(state.companyLogoDataUrl, "PNG", pageW - margin - logoW, margin, logoW, logoH, undefined, "FAST");
-        y = Math.max(y, margin + logoH + 10);
-      }catch(e){ console.error("Company logo failed to draw in PDF:", e); }
+      companyLogoW = state.companyLogoW * logoScale;
+      companyLogoH = state.companyLogoH * logoScale;
     }
+    var utzLogoSize = 48; // 2x the original 24px footer mark
+    var topBandH = Math.max(companyLogoH, utzLogoSize);
+    var topContentY = margin + topBandH + 14;
+    var y = topContentY;
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(15);
@@ -1806,7 +1842,7 @@ textarea.notes-box{
       var rowH = Math.max(lines.length, commentLines.length, 1) * lineH + 6;
       if (y + rowH > pageH - 170){
         doc.addPage();
-        y = margin;
+        y = topContentY;
       }
       doc.setDrawColor(180).setLineWidth(0.5);
       doc.rect(margin, y, contentW, rowH);
@@ -1830,7 +1866,7 @@ textarea.notes-box{
     y += 18;
 
     // ---- notes ----
-    if (y > pageH - 140){ doc.addPage(); y = margin; }
+    if (y > pageH - 140){ doc.addPage(); y = topContentY; }
     doc.setFont("helvetica", "bold").setFontSize(10);
     doc.text("NOTES / COMMENTS / MISSING PARTS", margin, y);
     y += 8;
@@ -1842,7 +1878,7 @@ textarea.notes-box{
     y += notesH + 18;
 
     // ---- sign-off ----
-    if (y > pageH - 150){ doc.addPage(); y = margin; }
+    if (y > pageH - 150){ doc.addPage(); y = topContentY; }
     doc.setFont("helvetica", "bold").setFontSize(10);
     doc.text("SIGN-OFF / APPROVAL", margin, y);
     y += 10;
@@ -1854,7 +1890,7 @@ textarea.notes-box{
       var role = r[0], label = r[1];
       var so = data.signoff[role];
       var blockH = 78;
-      if (y + blockH > pageH - margin){ doc.addPage(); y = margin; }
+      if (y + blockH > pageH - margin){ doc.addPage(); y = topContentY; }
       doc.setDrawColor(180).rect(margin, y, contentW, blockH);
       doc.setFont("helvetica", "bold").setFontSize(9).setTextColor(20);
       doc.text(label, margin + 8, y + 14);
@@ -1876,20 +1912,25 @@ textarea.notes-box{
     doc.setFont("helvetica", "normal").setFontSize(7).setTextColor(140);
     doc.text("Generated by UTZLINE ITP — " + new Date().toLocaleString(), margin, pageH - 16);
 
-    // ---- UTZLINE ITP's own brand mark, bottom-right of EVERY page ----
-    // Total page count isn't known until everything above has been laid
-    // out, so this is a post-processing pass over every page already
-    // created, stamped after all content -- doc.setPage() just changes
-    // which page subsequent drawing calls target, it doesn't lose anything
-    // already drawn on the pages visited along the way.
-    (function stampBrandMarkOnEveryPage(){
-      var footerLogoSize = 24;
+    // ---- both logos, top of EVERY page -- company logo top-left, UTZLINE
+    // ITP's own brand mark top-right (Andrew, 2026-09-19). Total page count
+    // isn't known until everything above has been laid out, so this is a
+    // post-processing pass over every page already created, stamped after
+    // all content -- doc.setPage() just changes which page subsequent
+    // drawing calls target, it doesn't lose anything already drawn on the
+    // pages visited along the way.
+    (function stampLogosOnEveryPage(){
       var totalPages = doc.internal.getNumberOfPages();
       var originalPage = doc.internal.getCurrentPageInfo().pageNumber;
       for (var p = 1; p <= totalPages; p++){
         doc.setPage(p);
+        if (companyLogoW > 0 && companyLogoH > 0){
+          try{
+            doc.addImage(state.companyLogoDataUrl, "PNG", margin, margin, companyLogoW, companyLogoH, undefined, "FAST");
+          }catch(e){ console.error("Company logo failed to draw in PDF:", e); }
+        }
         try{
-          doc.addImage(UTZLINE_ITP_LOGO_DATA_URL, "PNG", pageW - margin - footerLogoSize, pageH - margin - footerLogoSize + 8, footerLogoSize, footerLogoSize, undefined, "FAST");
+          doc.addImage(UTZLINE_ITP_LOGO_DATA_URL, "PNG", pageW - margin - utzLogoSize, margin, utzLogoSize, utzLogoSize, undefined, "FAST");
         }catch(e){ console.error("UTZLINE ITP logo failed to draw in PDF:", e); }
       }
       doc.setPage(originalPage);
