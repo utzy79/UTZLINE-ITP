@@ -158,6 +158,8 @@ p.hint{ font-size:13px; color:var(--text-secondary); margin:0 0 16px; line-heigh
   border:1px solid var(--border-strong); color:var(--text-secondary);
 }
 .list-row .row-chip.done{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent-ink); }
+.list-row .row-chip.warn{ border-color:var(--danger); color:var(--danger); }
+.list-row.artifact-row{ border-style:dashed; }
 .empty-note{ font-size:13px; color:var(--text-secondary); padding:14px 0; }
 
 /* ---- title block ---- */
@@ -1393,42 +1395,104 @@ body.plan-fullscreen .plan-viewport{
     var signed = !!(data.signoff.installer.sig && data.signoff.supervisor.sig);
     return { answered: answered, total: data.rows.length, signed: signed };
   }
+  // A cloud-sync client (Dropbox desktop/mobile, or an Android storage
+  // provider backing a synced folder) renames rather than overwrites a file
+  // when the SAME joinery item file was written from two places at once --
+  // e.g. two devices open on the same room, or a stale/offline device
+  // catching up. That produces extra .json files sitting right alongside
+  // the real one that the app never created and never asked for:
+  //   "y45ry5r (Andrew Utz's conflicted copy) (1).json"   -- Dropbox's own naming
+  //   "y45ry5r_1234620388645988351.json"                  -- an Android storage
+  //                                                            provider's naming
+  // populateItemList() used to list every .json file in the folder with no
+  // filtering at all, so each of these showed up as its own full joinery
+  // item -- Andrew reported this directly as the list "getting a lot of
+  // garbage." Fixed by recognizing these two known patterns and keeping
+  // them OUT of the main list (never deleting them -- one could hold real
+  // signed-off data from whichever device lost the naming race), tucked
+  // under a collapsed "sync-duplicate files" toggle instead so they can
+  // still be opened and reviewed by hand.
+  function isSyncArtifactFileName(fileName){
+    var base = String(fileName || "").replace(/\.json$/i, "");
+    if (/conflicted copy/i.test(base)) return true;
+    if (/_\d{10,}$/.test(base)) return true;
+    return false;
+  }
+  function buildItemRow(fileName, isArtifact){
+    return state.itpRoomHandle.getFileHandle(fileName).then(function(fh){ return fh.getFile(); })
+      .then(function(file){ return file.text(); })
+      .then(function(text){
+        var data = null;
+        try{ data = JSON.parse(text); }catch(e){ data = null; }
+        var joineryNo = (data && data.joineryNo) || fileName.replace(/\.json$/i, "");
+        var row = document.createElement("button");
+        row.type = "button";
+        row.className = "list-row" + (isArtifact ? " artifact-row" : "");
+        var sub = "Not started";
+        var chipClass = "";
+        var chipText = "Open";
+        if (data){
+          var prog = checklistProgress(data);
+          if (prog.signed) { sub = "Signed off"; chipClass = "done"; chipText = "Signed off"; }
+          else if (prog.answered > 0) sub = prog.answered + " of " + prog.total + " checked";
+        }
+        if (isArtifact){
+          sub = "⚠ Possible sync duplicate — " + sub;
+          chipClass = "warn";
+          chipText = "Review";
+        }
+        row.innerHTML =
+          '<div class="row-main"><div class="row-title"></div><div class="row-sub"></div></div>' +
+          '<div class="row-chip ' + chipClass + '"></div>';
+        row.querySelector(".row-title").textContent = joineryNo;
+        row.querySelector(".row-sub").textContent = sub;
+        row.querySelector(".row-chip").textContent = chipText;
+        row.addEventListener("click", function(){ openItem(fileName, joineryNo); });
+        return row;
+      }).catch(function(){ return null; /* skip an unreadable file rather than failing the whole list */ });
+  }
   function populateItemList(){
     return listJsonFileNames(state.itpRoomHandle).then(function(fileNames){
       itemListEl.innerHTML = "";
-      if (!fileNames.length){
+      var cleanNames = fileNames.filter(function(n){ return !isSyncArtifactFileName(n); });
+      var artifactNames = fileNames.filter(isSyncArtifactFileName);
+      if (!cleanNames.length){
         itemListEl.innerHTML = '<div class="empty-note">No joinery items checked off in this room yet.</div>';
-        return;
       }
-      return fileNames.reduce(function(chain, fileName){
+      return cleanNames.reduce(function(chain, fileName){
         return chain.then(function(){
-          return state.itpRoomHandle.getFileHandle(fileName).then(function(fh){ return fh.getFile(); })
-            .then(function(file){ return file.text(); })
-            .then(function(text){
-              var data = null;
-              try{ data = JSON.parse(text); }catch(e){ data = null; }
-              var joineryNo = (data && data.joineryNo) || fileName.replace(/\.json$/i, "");
-              var row = document.createElement("button");
-              row.type = "button";
-              row.className = "list-row";
-              var sub = "Not started";
-              var chipClass = "";
-              if (data){
-                var prog = checklistProgress(data);
-                if (prog.signed) { sub = "Signed off"; chipClass = "done"; }
-                else if (prog.answered > 0) sub = prog.answered + " of " + prog.total + " checked";
-              }
-              row.innerHTML =
-                '<div class="row-main"><div class="row-title"></div><div class="row-sub"></div></div>' +
-                '<div class="row-chip ' + chipClass + '"></div>';
-              row.querySelector(".row-title").textContent = joineryNo;
-              row.querySelector(".row-sub").textContent = sub;
-              row.querySelector(".row-chip").textContent = (data && checklistProgress(data).signed) ? "Signed off" : "Open";
-              row.addEventListener("click", function(){ openItem(fileName, joineryNo); });
-              itemListEl.appendChild(row);
-            }).catch(function(){ /* skip an unreadable file rather than failing the whole list */ });
+          return buildItemRow(fileName, false).then(function(row){ if (row) itemListEl.appendChild(row); });
         });
-      }, Promise.resolve());
+      }, Promise.resolve()).then(function(){
+        if (!artifactNames.length) return;
+        var toggleWrap = document.createElement("div");
+        toggleWrap.style.marginTop = "10px";
+        var toggleBtn = document.createElement("button");
+        toggleBtn.type = "button";
+        toggleBtn.className = "mbtn";
+        toggleBtn.textContent = "⚠ " + artifactNames.length + " sync-duplicate file" +
+          (artifactNames.length === 1 ? "" : "s") + " found — tap to review";
+        var artifactsList = document.createElement("div");
+        artifactsList.className = "list";
+        artifactsList.style.marginTop = "8px";
+        artifactsList.style.display = "none";
+        var artifactsBuilt = false;
+        toggleBtn.addEventListener("click", function(){
+          var showing = artifactsList.style.display !== "none";
+          if (showing){ artifactsList.style.display = "none"; return; }
+          artifactsList.style.display = "flex";
+          if (artifactsBuilt) return;
+          artifactsBuilt = true;
+          artifactNames.reduce(function(chain, fileName){
+            return chain.then(function(){
+              return buildItemRow(fileName, true).then(function(row){ if (row) artifactsList.appendChild(row); });
+            });
+          }, Promise.resolve());
+        });
+        toggleWrap.appendChild(toggleBtn);
+        toggleWrap.appendChild(artifactsList);
+        itemListEl.appendChild(toggleWrap);
+      });
     });
   }
   document.getElementById("newItemBtn").addEventListener("click", function(){

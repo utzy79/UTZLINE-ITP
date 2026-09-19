@@ -54,9 +54,25 @@
 // Projects screen; Andrew separately asked for it to be baked into the app
 // the same way the UTZLINE mark already is, which needs his actual logo
 // file to embed -- see the reply for what's needed to finish that part.)
+//
+// (v5, 2026-09-19: BUG FIX -- reported directly as the joinery-items list
+// "getting a lot of garbage." populateItemList() used to list every .json
+// file sitting in a room's itp folder as if it were a real joinery item,
+// with no filtering at all. A cloud-sync client (Dropbox, or an Android
+// storage provider backing a synced folder) renames rather than overwrites
+// a file when the SAME item file gets written from two places close
+// together in time -- e.g. "y45ry5r (Andrew Utz's conflicted copy) (1).json"
+// or "y45ry5r_1234620388645988351.json" -- and every one of those extra
+// files was showing up as its own full checklist entry. Nothing in this
+// app's own code ever creates a filename like that; it's produced entirely
+// by the sync layer underneath the folder. Fixed by recognising both known
+// naming patterns and keeping them out of the main list -- never deleted,
+// since one could hold real signed-off data from whichever device lost the
+// naming race -- tucked instead under a collapsed "N sync-duplicate files
+// found" toggle that can still be expanded and opened for review.)
 
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v4";
+var CACHE_NAME = "utzline-itp-cache-v5";
 
 var PRECACHE_URLS = [
   "./",
