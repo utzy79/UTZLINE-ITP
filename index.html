@@ -385,6 +385,18 @@ body.plan-fullscreen .plan-viewport{
       </div>
     </div>
     <input type="file" id="companyLogoFileInput" accept="image/*" style="display:none;">
+    <!-- Shared device identity (UTZLINE Data Standard v1, §6, added v7) --
+         reads from/writes to the same "utzline-identity" IndexedDB
+         database Site Measure/Viewer's own toolbar button uses -- same
+         origin, so a name set in either app shows up in both. See the
+         identity IDB helpers further down (near IDB_NAME) for the other
+         half of this. -->
+    <div class="logo-setting-row">
+      <div class="logo-setting-text" id="deviceUserNameText">Your name: not set — attributed on ITP checklists you complete on this device.</div>
+      <div class="logo-setting-actions">
+        <button class="mbtn" id="setDeviceUserNameBtn">Set your name</button>
+      </div>
+    </div>
     <div class="list" id="projectListEl"></div>
     <div class="actions-row"><button class="mbtn" id="switchRootBtn">Use a Different Projects Folder</button></div>
   </div>
@@ -579,6 +591,17 @@ body.plan-fullscreen .plan-viewport{
       .replace(/^[._]+|[._\s]+$/g, "");
     return cleaned.slice(0, 80) || "item";
   }
+  // Same rules as source.html's own sanitizeUserName -- a person's name,
+  // not a filename fragment, but still stripped of filesystem-hostile
+  // characters up front since UTZLINE Data Standard v1 §5 eventually
+  // embeds this name directly into every saved overlay's filename.
+  function sanitizeUserName(name){
+    var cleaned = String(name || "")
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
+      .trim()
+      .replace(/\s+/g, " ");
+    return cleaned.slice(0, 60);
+  }
   function todayISO(){
     var d = new Date();
     var m = String(d.getMonth() + 1).padStart(2, "0");
@@ -673,6 +696,62 @@ body.plan-fullscreen .plan-viewport{
   }
   var PROJECTS_ROOT_KEY = "projectsRootHandle";
   var COMPANY_LOGO_KEY = "companyLogoDataUrl";
+
+  /* ---- shared device identity (UTZLINE Data Standard v1, §6, added v7) ----
+     A SEPARATE tiny IndexedDB database from IDB_NAME above -- deliberately
+     using the exact same database name/store/key Site Measure/Viewer's own
+     copy of this block uses (see source.html), so a name set in either app
+     shows up in both: IndexedDB is scoped per-ORIGIN, not per-page, and
+     every UTZLINE app lives on the one GitHub Pages origin. This app never
+     needs to know redline-db's schema (Site Measure's own autosave store)
+     or vice versa -- just this one small shared pair. */
+  var IDENTITY_DB_NAME = "utzline-identity", IDENTITY_STORE = "kv", IDENTITY_KEY = "deviceUserName";
+  var deviceUserName = "";
+  function identityDbOpen(){
+    return new Promise(function(resolve, reject){
+      var req = indexedDB.open(IDENTITY_DB_NAME, 1);
+      req.onupgradeneeded = function(){ req.result.createObjectStore(IDENTITY_STORE); };
+      req.onsuccess = function(){ resolve(req.result); };
+      req.onerror = function(){ reject(req.error); };
+    });
+  }
+  function getDeviceUserName(){
+    return identityDbOpen().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction(IDENTITY_STORE, "readonly");
+        var req = tx.objectStore(IDENTITY_STORE).get(IDENTITY_KEY);
+        req.onsuccess = function(){ resolve(req.result || ""); };
+        req.onerror = function(){ reject(req.error); };
+      });
+    });
+  }
+  function setDeviceUserName(name){
+    name = String(name || "").trim();
+    return identityDbOpen().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction(IDENTITY_STORE, "readwrite");
+        tx.objectStore(IDENTITY_STORE).put(name, IDENTITY_KEY);
+        tx.oncomplete = function(){ resolve(name); };
+        tx.onerror = function(){ reject(tx.error); };
+      });
+    });
+  }
+  function updateDeviceUserNameText(){
+    var el = document.getElementById("deviceUserNameText");
+    if (!el) return;
+    el.textContent = deviceUserName
+      ? "Your name: " + deviceUserName + " — attributed on ITP checklists you complete on this device."
+      : "Your name: not set — attributed on ITP checklists you complete on this device.";
+  }
+  function loadDeviceUserName(){
+    return getDeviceUserName().then(function(name){
+      deviceUserName = name || "";
+      updateDeviceUserNameText();
+    }).catch(function(){
+      deviceUserName = "";
+      updateDeviceUserNameText();
+    });
+  }
 
   /* ============================== screen switching ============================== */
   var screens = {};
@@ -800,6 +879,28 @@ body.plan-fullscreen .plan-viewport{
       showToast("Company logo removed.");
     }).catch(function(err){ console.error("Remove logo failed:", err); });
   });
+
+  /* ---- shared device identity button (added v7) ----
+     Reuses the app's own generic text-prompt modal (genericPrompt, defined
+     further down alongside promptBackdrop) rather than a dedicated dialog,
+     since this is just a single-field "type a name and confirm" prompt --
+     exactly what that modal already does. */
+  var setDeviceUserNameBtn = document.getElementById("setDeviceUserNameBtn");
+  if (setDeviceUserNameBtn){
+    setDeviceUserNameBtn.addEventListener("click", function(){
+      genericPrompt("Your name — attributed on ITP checklists you complete on this device:", deviceUserName).then(function(value){
+        if (value === null) return; // cancelled
+        var clean = sanitizeUserName(value);
+        setDeviceUserName(clean).then(function(saved){
+          deviceUserName = saved;
+          updateDeviceUserNameText();
+          showToast(saved ? "Checklists on this device will be attributed to “" + saved + "”." : "Cleared — checklists on this device will show no name.");
+        }).catch(function(){
+          showToast("Couldn't save your name on this device.");
+        });
+      });
+    });
+  }
 
   /* ============================== project-meta.json (read-only here) ============================== */
   function readProjectMeta(dirHandle){
@@ -1549,11 +1650,20 @@ body.plan-fullscreen .plan-viewport{
         installer: { name: "", date: "", sig: null },
         supervisor: { name: "", date: "", sig: null }
       },
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      // Shared device identity (added v7, UTZLINE Data Standard v1 §6) --
+      // distinct from signoff.installer/supervisor.name above, which stay
+      // hand-typed at the moment of formal sign-off. This is just "who was
+      // last editing on this device", stamped automatically on every
+      // autosave (see writeChecklistFile) -- purely additive, so a blank
+      // string reads exactly like a checklist saved before this field
+      // existed.
+      lastEditedBy: ""
     };
   }
   function writeChecklistFile(fileName, data){
     data.updatedAt = new Date().toISOString();
+    data.lastEditedBy = deviceUserName || "";
     var payload = JSON.stringify(data);
     return state.itpRoomHandle.getFileHandle(fileName, { create: true }).then(function(fh){
       return fh.createWritable();
@@ -2188,6 +2298,7 @@ body.plan-fullscreen .plan-viewport{
   } else {
     loadCompanyLogo();
     tryRestoreRoot();
+    loadDeviceUserName(); // shared device identity (added v7) -- never blocks boot
   }
 
   window.addEventListener("beforeunload", function(){

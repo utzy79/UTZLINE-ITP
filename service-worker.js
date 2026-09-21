@@ -99,9 +99,17 @@
 // upscales it beyond its own natural pixel size, so if it still looks
 // soft, re-uploading a higher-resolution version of that same file is what
 // actually fixes it, not a code change here.)
+//
+// (v7, 2026-09-21: first piece of UTZLINE Data Standard v1 -- a shared
+// "device identity" setting (Projects screen, "Set your name") stored in
+// the same "utzline-identity" IndexedDB database Site Measure/Viewer's own
+// toolbar button now uses, so a name set in either app shows up in both
+// (same GitHub Pages origin). Stamped into every checklist autosave as
+// "lastEditedBy" -- purely additive, an empty string reads exactly like a
+// checklist saved before this field existed.)
 
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v6";
+var CACHE_NAME = "utzline-itp-cache-v7";
 
 var PRECACHE_URLS = [
   "./",
