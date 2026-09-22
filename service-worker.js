@@ -107,9 +107,17 @@
 // (same GitHub Pages origin). Stamped into every checklist autosave as
 // "lastEditedBy" -- purely additive, an empty string reads exactly like a
 // checklist saved before this field existed.)
+//
+// (v8, 2026-09-22: this app now has a sibling, UTZLINE Manufacture ITP --
+// the factory/pre-delivery-stage checklist app, forked directly from this
+// codebase, with its own project-wide "itp-manufacture" data folder so the
+// two stages' checklists for the same joinery item never collide. This
+// app's own level list now also excludes that folder by name, the same way
+// it already excluded its own "itp" folder, so it never shows up here
+// mislabeled as an empty level.)
 
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v7";
+var CACHE_NAME = "utzline-itp-cache-v8";
 
 var PRECACHE_URLS = [
   "./",

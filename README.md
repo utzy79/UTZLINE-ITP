@@ -1,6 +1,6 @@
 # UTZLINE ITP — installable app
 
-**Current version: v7** (its own independent version line, separate from Site Measure/Viewer's — bump this line every time a new build ships.)
+**Current version: v8** (its own independent version line, separate from Site Measure/Viewer's — bump this line every time a new build ships.)
 
 This folder is the self-contained, installable **UTZLINE ITP** app —
 a third app in the same family as **UTZLINE Site Measure** (the editor)
@@ -71,8 +71,10 @@ The `itp` folder sits directly under the **project's** own folder, as
 a sibling of the level folders — not nested inside any one level — so
 every joinery item across the whole project ends up under one place,
 itself organised by level and room to mirror the plan. Site Measure's
-own level list knows to skip a folder literally named `itp` so it never
-shows up there mislabeled as if it were a level.
+own level list, this app's own level list, and its sibling app UTZLINE
+Manufacture ITP's own level list all know to skip a folder literally
+named `itp` (and `itp-manufacture`, that sibling app's own equivalent
+folder) so neither ever shows up mislabeled as if it were a level.
 
 ## Getting this installed as its own app
 

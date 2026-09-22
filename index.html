@@ -1026,10 +1026,13 @@ body.plan-fullscreen .plan-viewport{
   var levelListEl = document.getElementById("levelListEl");
   function populateLevelList(){
     return listSubdirNames(state.projectHandle).then(function(names){
-      // "itp" is this app's own reserved project-wide folder -- never shown
-      // as if it were a level (same exclusion Site Measure's own
-      // listExistingLevels applies).
-      names = names.filter(function(n){ return n !== "itp"; });
+      // "itp" is this app's own reserved project-wide folder, and
+      // "itp-manufacture" is its sibling UTZLINE Manufacture ITP app's own
+      // reserved project-wide folder (the factory/pre-delivery-stage ITP
+      // app, forked from this one) -- neither is ever shown as if it were
+      // a level (same exclusion Site Measure's own listExistingLevels
+      // applies, to both names, for the same reason).
+      names = names.filter(function(n){ return n !== "itp" && n !== "itp-manufacture"; });
       levelListEl.innerHTML = "";
       if (!names.length){
         levelListEl.innerHTML = '<div class="empty-note">No levels in this project yet — add one in Site Measure first.</div>';
