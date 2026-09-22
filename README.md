@@ -1,6 +1,8 @@
 # UTZLINE ITP — installable app
 
-**Current version: v8** (its own independent version line, separate from Site Measure/Viewer's — bump this line every time a new build ships.)
+**Current version: v9** (its own independent version line, separate from Site Measure/Viewer's — bump this line every time a new build ships.)
+
+**v9 (2026-09-22):** flat-project support -- a project created by UTZLINE Projects v9+ (no real Level/Room folders; Project Saves/Floor Plans/ + joinery-items.json instead) now works here too. Levels/Rooms are read from those files, the joinery-item list is built from joinery-items.json ("+ New Joinery Item" is hidden -- only UTZLINE Projects creates items), and this app's flat-project checklist/PDF data lives in `Project Saves/UTZLINE ITP/Install ITP/` and `PDF Files/UTZLINE ITP/Install ITP/`. A LEGACY (folder-based) project's behaviour is unchanged. Bundled into this same release: this app's own project-wide data folder is renamed from `itp` to `itp-install` (disambiguating it from Manufacture ITP's `itp-manufacture`), with an automatic, additive, lossless migration from the old folder name the first time each room is opened.
 
 This folder is the self-contained, installable **UTZLINE ITP** app —
 a third app in the same family as **UTZLINE Site Measure** (the editor)
@@ -55,26 +57,56 @@ the level folders (see "Where things are saved" below).
 
 ## Where things are saved
 
+**LEGACY (folder-based) project:**
+
 ```
 <Projects folder>/
   <Project>/
     project-meta.json          <- written by Site Measure, read-only here
     <Level>/...                <- Site Measure's own level folders
-    itp/                       <- this app's own folder, project-wide
+    itp-install/                <- this app's own folder, project-wide
       <Level>/
         <Room>/
           <joinery-no>.json            <- this item's saved checklist state
           <joinery-no>_<timestamp>.pdf <- one file per export, never overwritten
 ```
 
-The `itp` folder sits directly under the **project's** own folder, as
+The `itp-install` folder sits directly under the **project's** own folder, as
 a sibling of the level folders — not nested inside any one level — so
 every joinery item across the whole project ends up under one place,
 itself organised by level and room to mirror the plan. Site Measure's
-own level list, this app's own level list, and its sibling app UTZLINE
-Manufacture ITP's own level list all know to skip a folder literally
-named `itp` (and `itp-manufacture`, that sibling app's own equivalent
-folder) so neither ever shows up mislabeled as if it were a level.
+own level list, this app's own level list, UTZLINE Projects' own level
+list, and its sibling app UTZLINE Manufacture ITP's own level list all
+know to skip a folder literally named `itp-install` (and `itp`, this
+folder's own pre-2026-09-22 name, and `itp-manufacture`, the sibling
+app's own equivalent folder) so none of them ever shows up mislabeled
+as if it were a level. Renamed from `itp` on 2026-09-22 — a room still
+holding files under the old name gets them copied over automatically
+(additively, losslessly, never deleting the old copy) the first time
+that room is opened.
+
+**FLAT project** (created by UTZLINE Projects v9+ — no real Level/Room
+folders at all):
+
+```
+<Projects folder>/
+  <Project>/
+    project-meta.json
+    joinery-items.json                          <- written by UTZLINE Projects, read-only here
+    Project Saves/
+      Floor Plans/<Project> - <Level>.json       <- one file per Level (rooms/markers inside)
+      UTZLINE ITP/Install ITP/
+        <Level> - <Room> - <Joinery Item>.json   <- this item's saved checklist state
+    PDF Files/
+      UTZLINE ITP/Install ITP/
+        <Level> - <Room> - <Joinery Item>_<timestamp>.pdf
+```
+
+One shared folder for the whole project (not per-Level/Room) since the
+filename itself already carries the full Level/Room/Item key. "+ New
+Joinery Item" is hidden for a flat project — only UTZLINE Projects
+creates joinery items — but every item it has created shows up here the
+moment it exists, even before its checklist has been touched.
 
 ## Getting this installed as its own app
 

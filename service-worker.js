@@ -115,9 +115,28 @@
 // app's own level list now also excludes that folder by name, the same way
 // it already excluded its own "itp" folder, so it never shows up here
 // mislabeled as an empty level.)
-
+//
+// v9, 2026-09-22 (same day): flat-project support, per Andrew's "Ok now
+// let's get both the itp pages working with the new folder structure" --
+// a project created by UTZLINE Projects v9+ (Project Saves/Floor Plans/,
+// joinery-items.json, no real Level/Room folders) now works here too:
+// Levels/Rooms are read from those files instead of folders, the joinery-
+// item list comes from joinery-items.json ("+ New Joinery Item" hidden --
+// only UTZLINE Projects creates items, per Andrew's own cutover
+// instruction), and this app's own checklist/PDF data for a flat project
+// lives in Project Saves/UTZLINE ITP/Install ITP/ and PDF Files/UTZLINE
+// ITP/Install ITP/ (one shared, app-grouped folder per project, matching
+// Andrew's own approved Release 3 folder diagram) rather than per-Level/
+// Room. Bundled into this same release: this app's own data folder is
+// renamed from "itp" to "itp-install" (Unified Implementation Brief
+// section O, disambiguating it from the "itp-manufacture" folder its
+// Manufacture ITP sibling owns) -- writes always go to the new name, and
+// opening a room additively, losslessly migrates any files still sitting
+// under the old "itp" folder into "itp-install" the first time that room
+// is opened post-rename (never deleting the old copy). A LEGACY
+// (folder-based) project's behaviour is otherwise completely unchanged.
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v8";
+var CACHE_NAME = "utzline-itp-cache-v9";
 
 var PRECACHE_URLS = [
   "./",

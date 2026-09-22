@@ -25,22 +25,61 @@
   - <ProjectsRoot>/<Project>/<Level>/<Room> -- the room folder itself is
     only ever used to confirm the room exists and to read its name; this
     app never opens or writes the room's own saves/pdfs/backup content.
+    LEGACY (folder-based) projects only -- see the flat-project section
+    below for a UTZLINE Projects-created project.
+
+  ---- Flat-project support (added 2026-09-22) ----
+  A project created by UTZLINE Projects v9+ has no real Level/Room
+  folders at all -- Levels/Rooms are data inside
+  <ProjectsRoot>/<Project>/Project Saves/Floor Plans/<Project> - <Level>.json
+  (isFlatProject() below detects this once per project, by testing
+  whether that folder opens read-only), and joinery items are entries in
+  a single project-wide <ProjectsRoot>/<Project>/joinery-items.json file
+  (written by UTZLINE Projects, read-only here) rather than free-typed on
+  this screen. For a flat project: Levels come from the Floor Plans
+  files, Rooms come from a Level file's own `rooms` array, and the
+  joinery-item list for a room is built from joinery-items.json filtered
+  to that Level/Room -- "+ New Joinery Item" is hidden, since UTZLINE
+  Projects is the only app allowed to create a joinery item (per Andrew's
+  own cutover instruction); tapping an existing item still creates a
+  blank checklist for it on first open, exactly like today. A LEGACY
+  (folder-based) project keeps every bit of the original behaviour below,
+  completely unaffected -- a project is always fully one shape or the
+  other, never mixed (matching Site Measure/Viewer's own v43 flat-
+  structure interop).
 
   ---- Data it owns ----
-  - <ProjectsRoot>/<Project>/itp/<Level>/<Room>/<joinery-no>.json -- one
-    file per joinery item, the checklist's own saved state (see
-    BLANK_CHECKLIST below for its shape). The "itp" folder sits directly
+  - LEGACY project: <ProjectsRoot>/<Project>/itp-install/<Level>/<Room>/<joinery-no>.json
+    -- one file per joinery item, the checklist's own saved state (see
+    BLANK_CHECKLIST below for its shape). "itp-install" sits directly
     under the PROJECT's own folder (a sibling of the level folders, not
     nested inside one) with its own Level/Room subfolders mirroring the
     plan's own structure -- deliberately project-wide rather than
     per-level, so every joinery item across the whole project ends up
-    under one place. Site Measure's own level list excludes "itp" by name
-    (see listExistingLevels' own comment in source.html) so this folder
-    never shows up there mislabeled as a level.
-  - <ProjectsRoot>/<Project>/itp/<Level>/<Room>/<joinery-no>_<timestamp>.pdf
+    under one place. Renamed from the original "itp" the same day this
+    flat-project support shipped (Unified Implementation Brief section O,
+    disambiguating from the "itp-manufacture" folder its Manufacture ITP
+    sibling app owns) -- opening a room additively, losslessly copies any
+    files still sitting in the old "itp/<Level>/<Room>" folder into the
+    new "itp-install/<Level>/<Room>" folder the first time that room is
+    opened post-rename (never deleting the old copy), so nothing already
+    saved goes missing; every other app's own level-list exclusion (Site
+    Measure/Viewer, Manufacture ITP, UTZLINE Projects) now excludes
+    "itp-install" by name alongside the existing "itp"/"itp-manufacture"
+    exclusions.
+  - LEGACY project: <ProjectsRoot>/<Project>/itp-install/<Level>/<Room>/<joinery-no>_<timestamp>.pdf
     -- one file per PDF export (each export adds a new timestamped file,
     same convention as Site Measure's own Save-PDF and batch-export
-    actions, rather than overwriting the previous export).
+    actions, rather than overwriting the previous export). PDFs already
+    exported under the old "itp" folder are left there, unmigrated (a
+    disclosed, deliberate scope limit -- they're just historical exports,
+    trivially re-exportable from the item's checklist at any time).
+  - FLAT project: <ProjectsRoot>/<Project>/Project Saves/UTZLINE ITP/Install ITP/<Level> - <Room> - <Joinery Item>.json
+    for the checklist state, and <ProjectsRoot>/<Project>/PDF Files/UTZLINE ITP/Install ITP/<Level> - <Room> - <Joinery Item>_<timestamp>.pdf
+    for exports -- matching Andrew's own approved Release 3 folder
+    diagram (flat, app-grouped, human-browsable), one shared folder for
+    every item in the whole project since the filename itself already
+    carries the Level/Room/Item key.
 
   A joinery item's checklist state autosaves shortly after any change
   (debounced) and also saves immediately on the explicit Save button and
@@ -356,7 +395,7 @@ body.plan-fullscreen .plan-viewport{
   <div class="screen" id="screenSetup">
     <div class="setup-card">
       <h2>Choose your Projects folder</h2>
-      <p class="hint">Point this at the same Projects folder Site Measure and the Viewer already use. ITP checklists are saved alongside each project's own levels, in a project-wide "itp" folder.</p>
+      <p class="hint">Point this at the same Projects folder Site Measure, the Viewer, and UTZLINE Projects already use. ITP checklists are saved alongside each project's own data, in a project-wide "itp-install" folder (or the flat Project Saves structure for a project created in UTZLINE Projects).</p>
       <button class="mbtn mbtn-accent" id="chooseRootBtn">Choose Projects Folder</button>
     </div>
   </div>
@@ -447,7 +486,7 @@ body.plan-fullscreen .plan-viewport{
   <div class="screen" id="screenItems">
     <button type="button" class="back-link" id="backToRoomsBtn">← All rooms</button>
     <h2 id="itemsHeading"></h2>
-    <p class="hint">Open an existing joinery item's checklist, or start a new one.</p>
+    <p class="hint" id="itemsHint">Open an existing joinery item's checklist, or start a new one.</p>
     <div class="list" id="itemListEl"></div>
     <div class="actions-row"><button class="mbtn mbtn-accent" id="newItemBtn">+ New Joinery Item</button></div>
   </div>
@@ -661,6 +700,239 @@ body.plan-fullscreen .plan-viewport{
     });
   }
 
+  /* ============================== flat-project support (added 2026-09-22) ==============================
+     A project created by UTZLINE Projects v9+ has no real Level/Room
+     folders -- see the top-of-file comment. These mirror source.html's
+     own same-named functions byte-for-byte in shape (not copy-pasted
+     verbatim, since this app has no shared module to import from, but
+     deliberately kept in sync with that file's own naming/schema so a
+     file either app writes reads back identically in the other). */
+  function getFloorPlansDir(projectHandle, create){
+    return projectHandle.getDirectoryHandle("Project Saves", { create: !!create }).then(function(psH){
+      return psH.getDirectoryHandle("Floor Plans", { create: !!create });
+    });
+  }
+  function isFlatProject(projectHandle){
+    if (!projectHandle) return Promise.resolve(false);
+    return getFloorPlansDir(projectHandle, false).then(function(){ return true; }, function(){ return false; });
+  }
+  function flatLevelFileName(projectName, levelName){
+    return sanitizeFileBase(projectName) + " - " + sanitizeFileBase(levelName) + ".json";
+  }
+  function readFlatLevelFileByName(projectHandle, fname){
+    return getFloorPlansDir(projectHandle, false).then(function(dirH){
+      return dirH.getFileHandle(fname);
+    }).then(function(fh){
+      return fh.getFile();
+    }).then(function(file){
+      return file.text();
+    }).then(function(text){
+      try{
+        var parsed = JSON.parse(text);
+        if (!parsed || typeof parsed !== "object" || !parsed.name) return null;
+        return {
+          name: parsed.name,
+          imageDataURL: parsed.imageDataURL || null,
+          imageTiles: parsed.imageTiles || null,
+          imageW: parsed.imageW || 0,
+          imageH: parsed.imageH || 0,
+          rooms: Array.isArray(parsed.rooms) ? parsed.rooms : [],
+          markers: Array.isArray(parsed.markers) ? parsed.markers : []
+        };
+      }catch(e){ return null; }
+    }, function(){ return null; });
+  }
+  function readFlatLevelFile(projectHandle, projectName, levelName){
+    return readFlatLevelFileByName(projectHandle, flatLevelFileName(projectName, levelName));
+  }
+  // Every Level in a flat project is one of these files -- listing Levels
+  // means reading "Floor Plans" and pulling each file's own `name` field,
+  // never parsed back out of the filename (same as Projects' own
+  // listLevelFiles / source.html's own listFlatLevelNames).
+  function listFlatLevelNames(projectHandle){
+    return getFloorPlansDir(projectHandle, false).then(function(dirH){
+      var fnames = [];
+      var iter = dirH.values();
+      function step(){
+        return iter.next().then(function(res){
+          if (res.done) return fnames;
+          if (res.value && res.value.kind === "file" && /\.json$/i.test(res.value.name)) fnames.push(res.value.name);
+          return step();
+        });
+      }
+      return step();
+    }, function(){ return []; }).then(function(fnames){
+      return fnames.reduce(function(chain, fname){
+        return chain.then(function(acc){
+          return readFlatLevelFileByName(projectHandle, fname).then(function(level){
+            if (level && level.name) acc.push(level.name);
+            return acc;
+          });
+        });
+      }, Promise.resolve([]));
+    }).then(function(names){
+      return names.sort(function(a, b){ return a.localeCompare(b, undefined, { sensitivity: "base" }); });
+    });
+  }
+  // A flat Level's file holds its roomlink markers directly in `markers`
+  // (not mixed into an `objects` array the way a legacy save file does) --
+  // reshapes it into the same {imageDataURL/imageTiles/imageW/imageH/
+  // roomlinks} plan object loadLevelPlan() below already produces, so
+  // renderLevelPlanScreen/computeItemItpStatus/etc. never need to know
+  // which shape a project is.
+  function flatLevelDataToPlan(levelData){
+    if (!levelData || !(levelData.imageW > 0) || !(levelData.imageH > 0)) return null;
+    var hasSingleImage = typeof levelData.imageDataURL === "string" && !!levelData.imageDataURL;
+    var hasTiles = Array.isArray(levelData.imageTiles) && levelData.imageTiles.length > 0;
+    if (!hasSingleImage && !hasTiles) return null;
+    var roomlinks = Array.isArray(levelData.markers) ? levelData.markers.filter(function(o){
+      return o && o.type === "roomlink" && !o.hidden && typeof o.roomName === "string" && o.roomName;
+    }) : [];
+    return {
+      imageDataURL: hasTiles ? null : levelData.imageDataURL,
+      imageTiles: hasTiles ? levelData.imageTiles : null,
+      imageW: levelData.imageW, imageH: levelData.imageH, roomlinks: roomlinks
+    };
+  }
+  // joinery-items.json -- project-wide, written by UTZLINE Projects, read
+  // only here: {joineryId, description, level, room, status}, no stable
+  // ID (see the Unified Implementation Brief investigation doc's own
+  // finding that no such concept exists anywhere in this ecosystem yet --
+  // an item's real identity is still just its (level, room, joineryId)
+  // path key, same as everywhere else).
+  function readJoineryItems(projectHandle){
+    if (!projectHandle) return Promise.resolve([]);
+    return projectHandle.getFileHandle("joinery-items.json", { create: false }).then(function(fh){
+      return fh.getFile();
+    }).then(function(file){
+      return file.text();
+    }).then(function(text){
+      try{ var arr = JSON.parse(text); return Array.isArray(arr) ? arr : []; }catch(e){ return []; }
+    }, function(){ return []; }); // no file yet -- not an error
+  }
+  // Where this app's own checklist/PDF files live for a FLAT project,
+  // matching Andrew's own approved Release 3 folder diagram -- one shared
+  // folder for every joinery item in the whole project (the filename
+  // itself already carries the Level/Room/Item key, so there's no
+  // collision risk), rather than the legacy per-Level/Room nesting.
+  function itpAppBranchName(){ return "Install ITP"; }
+  function getItpChecklistsDirFlat(projectHandle, create){
+    return projectHandle.getDirectoryHandle("Project Saves", { create: !!create }).then(function(psH){
+      return psH.getDirectoryHandle("UTZLINE ITP", { create: !!create });
+    }).then(function(branchH){
+      return branchH.getDirectoryHandle(itpAppBranchName(), { create: !!create });
+    });
+  }
+  function getItpPdfDirFlat(projectHandle, create){
+    return projectHandle.getDirectoryHandle("PDF Files", { create: !!create }).then(function(pfH){
+      return pfH.getDirectoryHandle("UTZLINE ITP", { create: !!create });
+    }).then(function(branchH){
+      return branchH.getDirectoryHandle(itpAppBranchName(), { create: !!create });
+    });
+  }
+  // The one filename-shape difference between the two project shapes: a
+  // legacy project already scopes the file to a Level/Room folder, so the
+  // joinery code alone is enough; a flat project shares one folder across
+  // the whole project, so the Level/Room have to be baked into the name.
+  function itpChecklistFileNameFor(levelName, roomName, joineryCode, isFlat){
+    return isFlat
+      ? sanitizeFileBase(levelName) + " - " + sanitizeFileBase(roomName) + " - " + sanitizeFileBase(joineryCode) + ".json"
+      : sanitizeFileBase(joineryCode) + ".json";
+  }
+  function itpPdfBaseNameFor(levelName, roomName, joineryCode, isFlat){
+    return isFlat
+      ? sanitizeFileBase(levelName) + " - " + sanitizeFileBase(roomName) + " - " + sanitizeFileBase(joineryCode)
+      : sanitizeFileBase(joineryCode);
+  }
+
+  /* ============================== itp/itp-install rename (Unified Implementation Brief section O) ==============================
+     Legacy (folder-based) projects only -- a flat project never had an
+     "itp" folder to begin with, so none of this applies there. Writes
+     always go to the new "itp-install" name; a room already fully or
+     partially saved under the OLD "itp" name keeps working via a one-
+     time, additive, lossless copy the first time that room is opened
+     post-rename (see ensureItpRoomFolderLegacy) -- the old folder is
+     NEVER deleted or modified, only read from. The two read-only status
+     helpers used by the Level Plan screen's marker colouring
+     (findItpChecklistFileLegacy / listItpRoomFilesLegacyMerged) check
+     BOTH names without ever creating or migrating anything, since they
+     run for every marker on a plan just from looking at it -- exactly
+     the same "never create a folder just from looking" guarantee
+     computeItemItpStatus/computeRoomItpStatus already documented below. */
+  function itpFolderName(){ return "itp-install"; }
+  function itpLegacyFolderName(){ return "itp"; }
+  function findItpChecklistFileLegacy(levelName, roomName, fileName){
+    function tryFolder(folderName){
+      return state.projectHandle.getDirectoryHandle(folderName, { create: false }).then(function(itpH){
+        return itpH.getDirectoryHandle(levelName, { create: false });
+      }).then(function(levelH){
+        return levelH.getDirectoryHandle(roomName, { create: false });
+      }).then(function(roomH){
+        return roomH.getFileHandle(fileName, { create: false });
+      });
+    }
+    return tryFolder(itpFolderName()).catch(function(){ return tryFolder(itpLegacyFolderName()); });
+  }
+  function listItpRoomFilesLegacyMerged(levelName, roomName){
+    function tryDir(folderName){
+      return state.projectHandle.getDirectoryHandle(folderName, { create: false }).then(function(itpH){
+        return itpH.getDirectoryHandle(levelName, { create: false });
+      }).then(function(levelH){
+        return levelH.getDirectoryHandle(roomName, { create: false });
+      }).then(function(roomH){
+        return listJsonFileNames(roomH).then(function(names){ return { handle: roomH, names: names }; });
+      }, function(){ return { handle: null, names: [] }; });
+    }
+    return Promise.all([tryDir(itpFolderName()), tryDir(itpLegacyFolderName())]).then(function(results){
+      var install = results[0], legacy = results[1];
+      var names = install.names.slice();
+      legacy.names.forEach(function(n){ if (names.indexOf(n) === -1) names.push(n); });
+      return {
+        names: names,
+        resolve: function(name){ return install.names.indexOf(name) !== -1 ? install.handle : legacy.handle; }
+      };
+    });
+  }
+  // Additive, one-way, one-time-per-room copy from the old "itp" folder
+  // into the new "itp-install" folder -- run every time a room is opened
+  // (cheap: a no-op the moment every old file has already been copied
+  // once), never overwriting a file already present under the new name
+  // (so a NEWER save under itp-install is never clobbered by an OLDER
+  // copy still sitting under the pre-rename "itp"), and never touching or
+  // deleting anything under the old name.
+  function migrateOldItpRoomIfNeeded(levelName, roomName, newRoomH){
+    return state.projectHandle.getDirectoryHandle(itpLegacyFolderName(), { create: false }).then(function(oldItpH){
+      return oldItpH.getDirectoryHandle(levelName, { create: false });
+    }).then(function(oldLevelH){
+      return oldLevelH.getDirectoryHandle(roomName, { create: false });
+    }).then(function(oldRoomH){
+      return listJsonFileNames(oldRoomH).then(function(oldNames){
+        return oldNames.reduce(function(chain, name){
+          return chain.then(function(){
+            return newRoomH.getFileHandle(name, { create: false }).then(function(){
+              // already migrated (or already independently saved under the new name) -- leave it alone
+            }, function(){
+              return oldRoomH.getFileHandle(name).then(function(fh){ return fh.getFile(); }).then(function(file){
+                return newRoomH.getFileHandle(name, { create: true }).then(function(nfh){
+                  return nfh.createWritable().then(function(w){ return w.write(file).then(function(){ return w.close(); }); });
+                });
+              });
+            });
+          });
+        }, Promise.resolve());
+      });
+    }, function(){ /* no old itp data for this room -- nothing to migrate */ });
+  }
+  function ensureItpRoomFolderLegacy(levelName, roomName){
+    return state.projectHandle.getDirectoryHandle(itpFolderName(), { create: true }).then(function(itpH){
+      return itpH.getDirectoryHandle(levelName, { create: true });
+    }).then(function(levelH){
+      return levelH.getDirectoryHandle(roomName, { create: true });
+    }).then(function(newRoomH){
+      return migrateOldItpRoomIfNeeded(levelName, roomName, newRoomH).then(function(){ return newRoomH; });
+    });
+  }
+
   /* ============================== tiny IndexedDB kv store ============================== */
   // Own database/store, separate from Site Measure/Viewer's own -- this app
   // only ever needs to remember one thing (the Projects root folder handle).
@@ -784,12 +1056,17 @@ body.plan-fullscreen .plan-viewport{
     rootName: "",
     projectHandle: null,
     projectName: "",
+    projectIsFlat: false,    // true once detected via isFlatProject() -- see the flat-project doc block above
     projectMeta: null,       // {no,name,contractor} from project-meta.json, or null
-    levelHandle: null,
+    levelHandle: null,       // legacy projects only -- null for a flat project (no Level folder exists)
     levelName: "",
-    roomHandle: null,
+    flatLevelData: null,     // flat projects only -- the current Level's own Project Saves/Floor Plans/*.json content
+    roomHandle: null,        // legacy projects only -- null for a flat project (no Room folder exists)
     roomName: "",
-    itpRoomHandle: null,     // <root>/<project>/itp/<level>/<room>
+    itpRoomHandle: null,     // checklist JSON directory: legacy <root>/<project>/itp-install/<level>/<room>,
+                             // flat <root>/<project>/Project Saves/UTZLINE ITP/Install ITP (whole-project, shared)
+    itpPdfHandle: null,      // PDF export directory: same as itpRoomHandle for legacy; its own
+                             // <root>/<project>/PDF Files/UTZLINE ITP/Install ITP for a flat project
     currentFileHandle: null, // this item's own .json file handle
     currentJoineryNo: "",
     currentData: null,       // the loaded/blank checklist object
@@ -1005,12 +1282,14 @@ body.plan-fullscreen .plan-viewport{
   function openProject(name){
     state.projectName = name;
     state.levelName = ""; state.roomName = ""; state.currentJoineryNo = "";
+    state.flatLevelData = null;
     updateCrumbs();
     return state.rootHandle.getDirectoryHandle(name).then(function(dirH){
       state.projectHandle = dirH;
-      return readProjectMeta(dirH);
-    }).then(function(meta){
-      state.projectMeta = meta;
+      return Promise.all([readProjectMeta(dirH), isFlatProject(dirH)]);
+    }).then(function(results){
+      state.projectMeta = results[0];
+      state.projectIsFlat = results[1];
       document.getElementById("levelsHeading").textContent = "“" + name + "” — levels";
       return populateLevelList();
     }).then(function(){ showScreen("Levels"); }).catch(function(err){
@@ -1025,17 +1304,30 @@ body.plan-fullscreen .plan-viewport{
   /* ============================== level list ============================== */
   var levelListEl = document.getElementById("levelListEl");
   function populateLevelList(){
-    return listSubdirNames(state.projectHandle).then(function(names){
-      // "itp" is this app's own reserved project-wide folder, and
-      // "itp-manufacture" is its sibling UTZLINE Manufacture ITP app's own
-      // reserved project-wide folder (the factory/pre-delivery-stage ITP
-      // app, forked from this one) -- neither is ever shown as if it were
-      // a level (same exclusion Site Measure's own listExistingLevels
-      // applies, to both names, for the same reason).
-      names = names.filter(function(n){ return n !== "itp" && n !== "itp-manufacture"; });
+    // Flat project: Levels are entries in Project Saves/Floor Plans/, not
+    // folders -- listFlatLevelNames() reads real Level names out of those
+    // files rather than listing this project's own subdirectories at all.
+    var namesPromise = state.projectIsFlat ? listFlatLevelNames(state.projectHandle) :
+      listSubdirNames(state.projectHandle).then(function(names){
+        // "itp-install" is this app's own reserved project-wide folder
+        // (renamed from "itp" -- see the itp/itp-install rename block
+        // above), and "itp-manufacture" is its sibling UTZLINE Manufacture
+        // ITP app's own reserved project-wide folder (the factory/pre-
+        // delivery-stage ITP app, forked from this one) -- neither is ever
+        // shown as if it were a level (same exclusion Site Measure's own
+        // listExistingLevels applies, to all three names, for the same
+        // reason). The old "itp" name is excluded too, purely so a legacy
+        // project mid-migration (some rooms already copied to
+        // itp-install, others not yet touched) never briefly shows it as
+        // an openable level either.
+        return names.filter(function(n){ return n !== "itp" && n !== "itp-install" && n !== "itp-manufacture"; });
+      });
+    return namesPromise.then(function(names){
       levelListEl.innerHTML = "";
       if (!names.length){
-        levelListEl.innerHTML = '<div class="empty-note">No levels in this project yet — add one in Site Measure first.</div>';
+        levelListEl.innerHTML = state.projectIsFlat
+          ? '<div class="empty-note">No levels in this project yet — add one in UTZLINE Projects first.</div>'
+          : '<div class="empty-note">No levels in this project yet — add one in Site Measure first.</div>';
         return;
       }
       names.forEach(function(name){
@@ -1052,11 +1344,28 @@ body.plan-fullscreen .plan-viewport{
   function openLevel(name){
     state.levelName = name;
     state.roomName = ""; state.currentJoineryNo = "";
+    state.flatLevelData = null;
     updateCrumbs();
+    document.getElementById("roomsHeading").textContent = "“" + name + "” — rooms";
+    document.getElementById("levelPlanHeading").textContent = "“" + name + "”";
+    if (state.projectIsFlat){
+      state.levelHandle = null; // no Level folder exists in a flat project
+      return readFlatLevelFile(state.projectHandle, state.projectName, name).then(function(levelData){
+        state.flatLevelData = levelData;
+        var plan = flatLevelDataToPlan(levelData);
+        if (plan){
+          currentLevelPlan = plan;
+          return renderLevelPlanScreen(plan).then(function(){ showScreen("LevelPlan"); });
+        }
+        currentLevelPlan = null;
+        return populateRoomList().then(function(){ showScreen("Rooms"); });
+      }).catch(function(err){
+        console.error("Open level (flat) failed:", err);
+        showToast("Couldn't open that level — try again.");
+      });
+    }
     return state.projectHandle.getDirectoryHandle(name).then(function(dirH){
       state.levelHandle = dirH;
-      document.getElementById("roomsHeading").textContent = "“" + name + "” — rooms";
-      document.getElementById("levelPlanHeading").textContent = "“" + name + "”";
       return loadLevelPlan(dirH, name);
     }).then(function(plan){
       if (plan){
@@ -1177,14 +1486,11 @@ body.plan-fullscreen .plan-viewport{
   // folders/files behind for items nobody has opened yet.
   function computeItemItpStatus(roomName, joineryCode){
     if (!joineryCode) return computeRoomItpStatus(roomName); // legacy marker, pre-dates joinery codes
-    var fileName = sanitizeFileBase(joineryCode) + ".json";
-    return state.projectHandle.getDirectoryHandle("itp").then(function(itpH){
-      return itpH.getDirectoryHandle(state.levelName);
-    }).then(function(levelH){
-      return levelH.getDirectoryHandle(roomName);
-    }).then(function(roomH){
-      return roomH.getFileHandle(fileName);
-    }).then(function(fh){ return fh.getFile(); })
+    var fileName = itpChecklistFileNameFor(state.levelName, roomName, joineryCode, state.projectIsFlat);
+    var filePromise = state.projectIsFlat
+      ? getItpChecklistsDirFlat(state.projectHandle, false).then(function(dirH){ return dirH.getFileHandle(fileName); })
+      : findItpChecklistFileLegacy(state.levelName, roomName, fileName);
+    return filePromise.then(function(fh){ return fh.getFile(); })
       .then(function(file){ return file.text(); })
       .then(function(text){
         var data = null;
@@ -1201,36 +1507,36 @@ body.plan-fullscreen .plan-viewport{
   // in a room and reports whether the room as a whole reads "complete" --
   // every item present has BOTH sign-off signatures. A room with no items
   // started yet, or with any item still missing a signature, reads
-  // incomplete. Never creates the itp/<level>/<room> folder as a side
-  // effect of just looking (unlike ensureItpRoomFolder, used when actually
-  // opening a room) -- a plan being previewed shouldn't leave empty
-  // folders behind for rooms nobody has opened yet.
+  // incomplete. Never creates the itp-install/<level>/<room> folder (or
+  // migrates the old "itp" one) as a side effect of just looking (unlike
+  // ensureItpRoomFolder, used when actually opening a room) -- a plan
+  // being previewed shouldn't leave empty folders behind, or trigger a
+  // migration copy, for rooms nobody has opened yet. Structurally
+  // unreachable for a flat project -- every marker UTZLINE Projects
+  // places always carries a joinery code, so computeItemItpStatus never
+  // falls through to this function there.
   function computeRoomItpStatus(roomName){
-    return state.projectHandle.getDirectoryHandle("itp").then(function(itpH){
-      return itpH.getDirectoryHandle(state.levelName);
-    }).then(function(levelH){
-      return levelH.getDirectoryHandle(roomName);
-    }).then(function(roomH){
-      return listJsonFileNames(roomH).then(function(fileNames){
-        if (!fileNames.length) return { complete: false, total: 0 };
-        return fileNames.reduce(function(chain, fileName){
-          return chain.then(function(acc){
-            return roomH.getFileHandle(fileName).then(function(fh){ return fh.getFile(); })
-              .then(function(file){ return file.text(); })
-              .then(function(text){
-                var data = null;
-                try{ data = JSON.parse(text); }catch(e){ data = null; }
-                var itemComplete = !!(data && data.signoff &&
-                  data.signoff.installer && data.signoff.installer.sig &&
-                  data.signoff.supervisor && data.signoff.supervisor.sig);
-                acc.total++;
-                if (!itemComplete) acc.anyIncomplete = true;
-                return acc;
-              }).catch(function(){ acc.total++; acc.anyIncomplete = true; return acc; });
-          });
-        }, Promise.resolve({ total: 0, anyIncomplete: false })).then(function(acc){
-          return { complete: acc.total > 0 && !acc.anyIncomplete, total: acc.total };
+    if (state.projectIsFlat) return Promise.resolve({ complete: false, total: 0 });
+    return listItpRoomFilesLegacyMerged(state.levelName, roomName).then(function(merged){
+      if (!merged.names.length) return { complete: false, total: 0 };
+      return merged.names.reduce(function(chain, fileName){
+        return chain.then(function(acc){
+          var roomH = merged.resolve(fileName);
+          return roomH.getFileHandle(fileName).then(function(fh){ return fh.getFile(); })
+            .then(function(file){ return file.text(); })
+            .then(function(text){
+              var data = null;
+              try{ data = JSON.parse(text); }catch(e){ data = null; }
+              var itemComplete = !!(data && data.signoff &&
+                data.signoff.installer && data.signoff.installer.sig &&
+                data.signoff.supervisor && data.signoff.supervisor.sig);
+              acc.total++;
+              if (!itemComplete) acc.anyIncomplete = true;
+              return acc;
+            }).catch(function(){ acc.total++; acc.anyIncomplete = true; return acc; });
         });
+      }, Promise.resolve({ total: 0, anyIncomplete: false })).then(function(acc){
+        return { complete: acc.total > 0 && !acc.anyIncomplete, total: acc.total };
       });
     }).catch(function(){ return { complete: false, total: 0 }; }); // no itp data for this room yet
   }
@@ -1435,11 +1741,24 @@ body.plan-fullscreen .plan-viewport{
   /* ============================== room list ============================== */
   var roomListEl = document.getElementById("roomListEl");
   function populateRoomList(){
-    return listSubdirNames(state.levelHandle).then(function(names){
-      names = names.filter(function(n){ return n !== "saves" && n !== "pdfs" && n !== "backup"; });
+    // Flat project: Rooms are entries in the current Level's own
+    // Project Saves/Floor Plans/ file (`rooms`, read into state.flatLevelData
+    // by openLevel), not folders -- there is no Room folder to list.
+    var namesPromise = state.projectIsFlat
+      ? Promise.resolve(
+          (state.flatLevelData && Array.isArray(state.flatLevelData.rooms))
+            ? state.flatLevelData.rooms.map(function(r){ return r && r.name; }).filter(Boolean)
+            : []
+        )
+      : listSubdirNames(state.levelHandle).then(function(names){
+          return names.filter(function(n){ return n !== "saves" && n !== "pdfs" && n !== "backup"; });
+        });
+    return namesPromise.then(function(names){
       roomListEl.innerHTML = "";
       if (!names.length){
-        roomListEl.innerHTML = '<div class="empty-note">No rooms on this level yet — add one in Site Measure first.</div>';
+        roomListEl.innerHTML = state.projectIsFlat
+          ? '<div class="empty-note">No rooms on this level yet — add one in UTZLINE Projects first.</div>'
+          : '<div class="empty-note">No rooms on this level yet — add one in Site Measure first.</div>';
         return;
       }
       names.forEach(function(name){
@@ -1453,22 +1772,36 @@ body.plan-fullscreen .plan-viewport{
       });
     });
   }
+  // Resolves to {checklistsHandle, pdfHandle} for the current
+  // level/room -- a flat project shares one whole-project folder for
+  // both (create:true, cheap once created); a legacy project gets its
+  // own itp-install/<level>/<room> folder (with the old-"itp" migration
+  // baked in) and reuses that SAME folder for PDFs too, exactly as
+  // before this release.
   function ensureItpRoomFolder(){
-    return state.projectHandle.getDirectoryHandle("itp", { create: true }).then(function(itpH){
-      return itpH.getDirectoryHandle(state.levelName, { create: true });
-    }).then(function(levelH){
-      return levelH.getDirectoryHandle(state.roomName, { create: true });
+    if (state.projectIsFlat){
+      return Promise.all([
+        getItpChecklistsDirFlat(state.projectHandle, true),
+        getItpPdfDirFlat(state.projectHandle, true)
+      ]).then(function(results){
+        return { checklistsHandle: results[0], pdfHandle: results[1] };
+      });
+    }
+    return ensureItpRoomFolderLegacy(state.levelName, state.roomName).then(function(roomH){
+      return { checklistsHandle: roomH, pdfHandle: roomH };
     });
   }
   function openRoom(name){
     state.roomName = name;
     state.currentJoineryNo = "";
     updateCrumbs();
-    return state.levelHandle.getDirectoryHandle(name).then(function(dirH){
+    var roomHandlePromise = state.projectIsFlat ? Promise.resolve(null) : state.levelHandle.getDirectoryHandle(name);
+    return roomHandlePromise.then(function(dirH){
       state.roomHandle = dirH;
       return ensureItpRoomFolder();
-    }).then(function(itpRoomH){
-      state.itpRoomHandle = itpRoomH;
+    }).then(function(handles){
+      state.itpRoomHandle = handles.checklistsHandle;
+      state.itpPdfHandle = handles.pdfHandle;
       document.getElementById("itemsHeading").textContent = "“" + name + "” — joinery items";
       return populateItemList();
     }).then(function(){ showScreen("Items"); }).catch(function(err){
@@ -1490,17 +1823,19 @@ body.plan-fullscreen .plan-viewport{
     state.roomName = roomName;
     state.currentJoineryNo = "";
     updateCrumbs();
-    return state.levelHandle.getDirectoryHandle(roomName).then(function(dirH){
+    var roomHandlePromise = state.projectIsFlat ? Promise.resolve(null) : state.levelHandle.getDirectoryHandle(roomName);
+    return roomHandlePromise.then(function(dirH){
       state.roomHandle = dirH;
       return ensureItpRoomFolder();
-    }).then(function(itpRoomH){
-      state.itpRoomHandle = itpRoomH;
+    }).then(function(handles){
+      state.itpRoomHandle = handles.checklistsHandle;
+      state.itpPdfHandle = handles.pdfHandle;
       document.getElementById("itemsHeading").textContent = "“" + roomName + "” — joinery items";
       // openItem() itself creates the file if missing and falls back to a
       // blank checklist in memory when it's empty/unreadable, so there's no
       // need to pre-check existence here the way "+ New Joinery Item" does
       // (that only exists there to show an "already exists" toast).
-      var fileName = sanitizeFileBase(joineryCode) + ".json";
+      var fileName = itpChecklistFileNameFor(state.levelName, roomName, joineryCode, state.projectIsFlat);
       return openItem(fileName, joineryCode);
     }).catch(function(err){
       console.error("Open joinery item from plan failed:", err);
@@ -1572,7 +1907,19 @@ body.plan-fullscreen .plan-viewport{
         return row;
       }).catch(function(){ return null; /* skip an unreadable file rather than failing the whole list */ });
   }
+  var newItemBtn = document.getElementById("newItemBtn");
+  var itemsHintEl = document.getElementById("itemsHint");
   function populateItemList(){
+    // Flat project: joinery items are records in joinery-items.json (only
+    // UTZLINE Projects creates them, per Andrew's own cutover instruction)
+    // rather than files that happen to exist in a folder -- "+ New Joinery
+    // Item" is hidden, and every item already in the register shows up
+    // here even before its checklist has ever been touched.
+    newItemBtn.style.display = state.projectIsFlat ? "none" : "";
+    itemsHintEl.textContent = state.projectIsFlat
+      ? "Open an existing joinery item's checklist. New joinery items are added in UTZLINE Projects."
+      : "Open an existing joinery item's checklist, or start a new one.";
+    if (state.projectIsFlat) return populateItemListFlat();
     return listJsonFileNames(state.itpRoomHandle).then(function(fileNames){
       itemListEl.innerHTML = "";
       var cleanNames = fileNames.filter(function(n){ return !isSyncArtifactFileName(n); });
@@ -1616,12 +1963,75 @@ body.plan-fullscreen .plan-viewport{
       });
     });
   }
-  document.getElementById("newItemBtn").addEventListener("click", function(){
+  // Flat-project item list: sourced from joinery-items.json (filtered to
+  // the current Level/Room), not from whichever checklist files happen to
+  // already exist -- an item the register knows about but nobody has
+  // opened here yet still shows up, as "Not started", rather than being
+  // invisible the way a never-created legacy file would be.
+  function populateItemListFlat(){
+    return readJoineryItems(state.projectHandle).then(function(items){
+      itemListEl.innerHTML = "";
+      var matches = items.filter(function(it){
+        return it && it.level === state.levelName && it.room === state.roomName;
+      });
+      if (!matches.length){
+        itemListEl.innerHTML = '<div class="empty-note">No joinery items in UTZLINE Projects for this room yet — add one there first.</div>';
+        return;
+      }
+      return matches.reduce(function(chain, item){
+        return chain.then(function(){
+          return buildFlatItemRow(item).then(function(row){ if (row) itemListEl.appendChild(row); });
+        });
+      }, Promise.resolve());
+    });
+  }
+  function buildFlatItemRow(item){
+    var joineryId = item.joineryId || "";
+    var fileName = itpChecklistFileNameFor(state.levelName, state.roomName, joineryId, true);
+    return state.itpRoomHandle.getFileHandle(fileName, { create: false }).then(function(fh){ return fh.getFile(); })
+      .then(function(file){ return file.text(); })
+      .then(function(text){
+        var data = null;
+        try{ data = JSON.parse(text); }catch(e){ data = null; }
+        return buildFlatItemRowFromData(item, fileName, data);
+      }, function(){
+        // No checklist started yet -- still show the row (the item exists
+        // the moment UTZLINE Projects creates it, per Andrew's "pick from
+        // existing items only" decision), unlike a legacy project's
+        // files-are-the-list model, where a never-created file is simply
+        // never in the list at all.
+        return buildFlatItemRowFromData(item, fileName, null);
+      });
+  }
+  function buildFlatItemRowFromData(item, fileName, data){
+    var joineryId = item.joineryId || "";
+    var row = document.createElement("button");
+    row.type = "button";
+    row.className = "list-row";
+    var sub = item.description || "Not started";
+    var chipClass = "";
+    var chipText = "Open";
+    if (data){
+      var prog = checklistProgress(data);
+      if (prog.signed) { sub = "Signed off" + (item.description ? " · " + item.description : ""); chipClass = "done"; chipText = "Signed off"; }
+      else if (prog.answered > 0) sub = (prog.answered + " of " + prog.total + " checked") + (item.description ? " · " + item.description : "");
+    }
+    row.innerHTML =
+      '<div class="row-main"><div class="row-title"></div><div class="row-sub"></div></div>' +
+      '<div class="row-chip ' + chipClass + '"></div>';
+    row.querySelector(".row-title").textContent = joineryId;
+    row.querySelector(".row-sub").textContent = sub;
+    row.querySelector(".row-chip").textContent = chipText;
+    row.addEventListener("click", function(){ openItem(fileName, joineryId); });
+    return row;
+  }
+  newItemBtn.addEventListener("click", function(){
+    if (state.projectIsFlat) return; // hidden in this mode -- see populateItemList
     genericPrompt("Joinery number for this new item:", "").then(function(value){
       if (value === null) return;
       var joineryNo = String(value).trim();
       if (!joineryNo) { showToast("Enter a joinery number first."); return; }
-      var fileName = sanitizeFileBase(joineryNo) + ".json";
+      var fileName = itpChecklistFileNameFor(state.levelName, state.roomName, joineryNo, false);
       state.itpRoomHandle.getFileHandle(fileName).then(function(){
         // Already exists -- open it rather than silently overwriting.
         showToast("“" + joineryNo + "” already exists — opening it.");
@@ -2182,9 +2592,13 @@ body.plan-fullscreen .plan-viewport{
       doc.setPage(originalPage);
     })();
 
-    var fileName = sanitizeFileBase(data.joineryNo) + "_" + timestampForFilename() + ".pdf";
+    var fileName = itpPdfBaseNameFor(state.levelName, state.roomName, data.joineryNo, state.projectIsFlat) +
+      "_" + timestampForFilename() + ".pdf";
     var blob = doc.output("blob");
-    return state.itpRoomHandle.getFileHandle(fileName, { create: true }).then(function(fh){
+    // Legacy: same folder as the checklist JSON (itpPdfHandle === itpRoomHandle,
+    // see ensureItpRoomFolder). Flat: its own PDF Files/UTZLINE ITP/Install ITP/
+    // folder, per Andrew's own approved Release 3 folder diagram.
+    return state.itpPdfHandle.getFileHandle(fileName, { create: true }).then(function(fh){
       return fh.createWritable();
     }).then(function(w){
       return w.write(blob).then(function(){ return w.close(); });
