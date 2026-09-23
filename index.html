@@ -3,7 +3,18 @@
 <meta charset="utf-8">
 <head>
 <!--
-  UTZLINE ITP -- joinery installation checklists.
+  UTZLINE Install ITP -- joinery installation checklists. (Branding fix,
+  2026-09-23: Andrew, verbatim, "this needs to change to UTZLINE Install ITP
+  Branding for the install itp logos" -- the app-facing name/title/header/
+  PDF-footer text now say "UTZLINE Install ITP" everywhere, disambiguating
+  it from its sibling "UTZLINE Manufacture ITP" the same way that app's own
+  manifest already does. This is a DISPLAY-ONLY rename -- the shared
+  on-disk folder name "UTZLINE ITP" (Project Saves/UTZLINE ITP/Install ITP/
+  and PDF Files/UTZLINE ITP/Install ITP/, a folder BOTH this app and
+  Manufacture ITP write into side by side) is deliberately left unchanged,
+  since renaming it would break already-saved projects and the shared
+  folder convention with Manufacture ITP -- Andrew asked for the LOGOS/
+  branding, not the file layout.
 
   A third, separate app in the same family as UTZLINE Site Measure (the
   editor) and UTZLINE Viewer (the read-only browser). It reuses the SAME
@@ -85,8 +96,33 @@
   (debounced) and also saves immediately on the explicit Save button and
   right before a PDF export, so leaving mid-edit or closing the tab loses
   at most a few seconds of typing, never the item itself.
+
+  ---- Shared name+PIN identity registry (2026-09-23) ----
+  Ported verbatim from UTZLINE Delivery ITP, the reference implementation
+  Andrew asked to be rolled out "throughout the entire system." Replaces
+  this app's old "Set your name" button + single-field genericPrompt (a
+  freeform name, no PIN) with a shared CSV registry, <ProjectsRoot>/
+  utzline-users.csv (header "Name,PIN,ShowInApps"), PIN stored in plain
+  text -- reference-only identity for attribution, not a real access-
+  control system, so Andrew can inspect/edit it directly. This does NOT
+  change the underlying per-device "utzline-identity" IndexedDB mechanism
+  every sibling app already reads/writes (getDeviceUserName/
+  setDeviceUserName below are untouched) -- only what triggers the write
+  on this screen.
+
+  Andrew's follow-up, verbatim: "implement the username as per the
+  delivery itp throughout the entire system, but instead of it opening a
+  popup, the button is the selector, when you pick a name it opens a
+  numberpad to input the pin (4 digit pin)." So the old "Set your name"
+  button is gone: <select id="identitySelector"> IS the button (its own
+  native dropdown lists every known name plus "+ Add a new name..."), and
+  choosing a name immediately opens the numberpad modal (a real on-screen
+  0-9 keypad, not a text field) to verify its PIN. Adding a brand new name
+  still asks for the name as plain text (this app's own genericPrompt) and
+  its "show me in" app list via a small dedicated modal -- only the PIN
+  steps themselves (choose + confirm) are numberpad-only.
 -->
-<title>UTZLINE ITP</title>
+<title>UTZLINE Install ITP</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="manifest" href="./manifest.json?v=v1">
 <meta name="theme-color" content="#0d1411">
@@ -95,7 +131,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="UTZLINE ITP">
+<meta name="apple-mobile-web-app-title" content="UTZLINE Install ITP">
 <style>
 @font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:500;src:url('./mono.woff2') format('woff2');}
 @font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:500;src:url('./sans.woff2') format('woff2');}
@@ -184,6 +220,9 @@ p.hint{ font-size:13px; color:var(--text-secondary); margin:0 0 16px; line-heigh
 .mbtn-accent:hover{ filter:brightness(1.08); }
 .mbtn-danger{ color:var(--danger); border-color:var(--danger); }
 .mbtn[disabled]{ opacity:.5; cursor:default; }
+.identity-select{ max-width:190px; }
+@keyframes numberpadShake{ 10%,90%{transform:translateX(-1px);} 20%,80%{transform:translateX(2px);} 30%,50%,70%{transform:translateX(-5px);} 40%,60%{transform:translateX(5px);} }
+.numberpad-shake{ animation:numberpadShake .4s; }
 .actions-row{ display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
 .back-link{
   background:none; border:none; color:var(--text-secondary); cursor:pointer;
@@ -423,7 +462,7 @@ body.plan-fullscreen .plan-viewport{
 
 <header>
   <img class="brand-icon" src="./icons/icon-192.png?v=v1" alt="">
-  <div class="brand-text">UTZ<b>LINE</b> ITP</div>
+  <div class="brand-text">UTZ<b>LINE</b> Install ITP</div>
   <div class="crumbs" id="crumbsEl"></div>
 </header>
 
@@ -469,9 +508,15 @@ body.plan-fullscreen .plan-viewport{
          identity IDB helpers further down (near IDB_NAME) for the other
          half of this. -->
     <div class="logo-setting-row">
-      <div class="logo-setting-text" id="deviceUserNameText">Your name: not set — attributed on ITP checklists you complete on this device.</div>
+      <div class="logo-setting-text" id="deviceUserNameText">Your name &amp; PIN: not set — attributed on ITP checklists you complete on this device.</div>
       <div class="logo-setting-actions">
-        <button class="mbtn" id="setDeviceUserNameBtn">Set your name</button>
+        <!-- The button IS the selector (2026-09-23) -- Andrew, verbatim: "the
+             button is the selector, when you pick a name it opens a
+             numberpad to input the pin." A native <select>, not a button
+             that opens a separate popup: its own dropdown lists every known
+             name plus "+ Add a new name...", and choosing one immediately
+             opens the numberpad modal further down. See populateIdentitySelector(). -->
+        <select class="mbtn identity-select" id="identitySelector" aria-label="Your name"></select>
       </div>
     </div>
     <div class="list" id="projectListEl"></div>
@@ -657,6 +702,44 @@ body.plan-fullscreen .plan-viewport{
     <div id="jobNoteListEl" style="display:flex; flex-direction:column; gap:6px; max-height:280px; overflow-y:auto; margin-bottom:14px;"></div>
     <div class="modal-actions">
       <button class="mbtn" id="jobNoteViewCancel">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Shared name+PIN identity: numberpad + "show me in" modals (2026-09-23 --
+     see the top-of-file comment's "Shared name+PIN identity registry"
+     section for the full design/rationale). Andrew's follow-up instruction,
+     verbatim: "implement the username as per the delivery itp throughout
+     the entire system, but instead of it opening a popup, the button is
+     the selector, when you pick a name it opens a numberpad to input the
+     pin (4 digit pin)." So the old "Set your name" button is gone -- the
+     <select id="identitySelector"> above (now the button itself) lists the
+     names, and choosing one opens ONLY this numberpad (a proper on-screen
+     0-9 keypad, not a text field) to enter/verify the 4-digit PIN. Adding a
+     brand new name still needs its name typed as text (genericPrompt,
+     unchanged) and its "show me in" app list ticked (the small dedicated
+     modal below) -- only the PIN itself is numberpad-only, per that
+     instruction. -->
+<div class="modal-backdrop" id="numberpadBackdrop" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="numberpadTitle" style="max-width:300px; text-align:center;">
+    <p id="numberpadTitle" style="font-weight:700; margin-bottom:2px;">Enter PIN</p>
+    <p id="numberpadSubtitle" style="margin:0 0 14px; font-size:12px; color:var(--text-secondary);"></p>
+    <div id="numberpadDots" style="display:flex; justify-content:center; gap:14px; margin-bottom:18px;"></div>
+    <div id="numberpadGrid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:9px; margin-bottom:16px;"></div>
+    <div class="modal-actions">
+      <button class="mbtn" id="numberpadCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="identityAppChecksBackdrop" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" style="max-width:320px;">
+    <p style="font-weight:700; margin-bottom:4px;">Show me in</p>
+    <p style="margin:0 0 12px; font-size:12px; color:var(--text-secondary);">Reference only, for Andrew's own admin use -- doesn't restrict which app this name can actually sign in on.</p>
+    <div id="identityAppChecksList" style="display:flex; flex-direction:column; gap:7px; margin-bottom:14px; font-size:13px;"></div>
+    <div class="modal-actions">
+      <button class="mbtn" id="identityAppChecksCancel">Cancel</button>
+      <button class="mbtn mbtn-accent" id="identityAppChecksSave">Save</button>
     </div>
   </div>
 </div>
@@ -1285,13 +1368,14 @@ body.plan-fullscreen .plan-viewport{
     var el = document.getElementById("deviceUserNameText");
     if (!el) return;
     el.textContent = deviceUserName
-      ? "Your name: " + deviceUserName + " — attributed on ITP checklists you complete on this device."
-      : "Your name: not set — attributed on ITP checklists you complete on this device.";
+      ? "Your name & PIN: " + deviceUserName + " — attributed on ITP checklists you complete on this device."
+      : "Your name & PIN: not set — attributed on ITP checklists you complete on this device.";
   }
   function loadDeviceUserName(){
     return getDeviceUserName().then(function(name){
       deviceUserName = name || "";
       updateDeviceUserNameText();
+      populateIdentitySelector(); // in case this resolves after the root folder (order isn't guaranteed -- both are fired at boot)
     }).catch(function(){
       deviceUserName = "";
       updateDeviceUserNameText();
@@ -1430,25 +1514,366 @@ body.plan-fullscreen .plan-viewport{
     }).catch(function(err){ console.error("Remove logo failed:", err); });
   });
 
-  /* ---- shared device identity button (added v7) ----
-     Reuses the app's own generic text-prompt modal (genericPrompt, defined
-     further down alongside promptBackdrop) rather than a dedicated dialog,
-     since this is just a single-field "type a name and confirm" prompt --
-     exactly what that modal already does. */
-  var setDeviceUserNameBtn = document.getElementById("setDeviceUserNameBtn");
-  if (setDeviceUserNameBtn){
-    setDeviceUserNameBtn.addEventListener("click", function(){
-      genericPrompt("Your name — attributed on ITP checklists you complete on this device:", deviceUserName).then(function(value){
-        if (value === null) return; // cancelled
-        var clean = sanitizeUserName(value);
-        setDeviceUserName(clean).then(function(saved){
-          deviceUserName = saved;
-          updateDeviceUserNameText();
-          showToast(saved ? "Checklists on this device will be attributed to “" + saved + "”." : "Cleared — checklists on this device will show no name.");
-        }).catch(function(){
-          showToast("Couldn't save your name on this device.");
+  /* ---- shared name+PIN identity registry (2026-09-23) ----
+     Ported verbatim from UTZLINE Delivery ITP (the reference implementation
+     Andrew asked to be rolled out "throughout the entire system"). Plain
+     CSV, header row "Name,PIN,ShowInApps", one row per person -- Name as
+     typed (matched case-insensitively + trimmed for lookups), PIN in PLAIN
+     TEXT (deliberate -- this is a reference-only attribution registry, not
+     a real access-control system, and Andrew explicitly wants it plain,
+     spreadsheet-openable and file-manager-editable so he can inspect it,
+     reset a PIN by clearing/editing that cell, or delete a row to free a
+     name for reuse, all without touching any project data), ShowInApps a
+     semicolon-separated list of app codes (purely a directory field for
+     Andrew's own admin use -- it never gates or restricts anything here).
+     No in-app "forgot PIN" flow, by design -- recovery is file-manager-only.
+     This file lives at the PROJECTS-ROOT level (state.rootHandle), a
+     sibling of every project folder, and is the SAME shared file every app
+     in the family reads/writes, so a name added from any app shows up in
+     all of them. */
+  var USERS_CSV_NAME = "utzline-users.csv";
+  var USERS_CSV_HEADER = ["Name", "PIN", "ShowInApps"];
+  // Fixed set Andrew specified, in this exact order for the checkbox list.
+  var APP_CODES = [
+    ["SiteMeasure", "Site Measure"],
+    ["Viewer", "Viewer"],
+    ["InstallITP", "Install ITP"],
+    ["ManufactureITP", "Manufacture ITP"],
+    ["DeliveryITP", "Delivery ITP"],
+    ["Projects", "Projects"],
+    ["Scheduler", "Scheduler"]
+  ];
+  // Small, defensive CSV parse/stringify pair (RFC 4180 minimal subset) --
+  // values here are short and simple (a name, a few digits, a short code
+  // list) but this still handles a quote/comma/newline inside a field
+  // rather than assuming it'll never happen.
+  function csvEscapeField(v){
+    v = String(v == null ? "" : v);
+    return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  }
+  function csvStringifyRows(rows){
+    return rows.map(function(r){ return r.map(csvEscapeField).join(","); }).join("\r\n") + "\r\n";
+  }
+  function csvParseText(text){
+    var rows = [], row = [], field = "", inQuotes = false;
+    var i = 0, len = text.length;
+    while (i < len){
+      var c = text[i];
+      if (inQuotes){
+        if (c === '"'){
+          if (text[i + 1] === '"'){ field += '"'; i += 2; continue; }
+          inQuotes = false; i++; continue;
+        }
+        field += c; i++; continue;
+      }
+      if (c === '"'){ inQuotes = true; i++; continue; }
+      if (c === ','){ row.push(field); field = ""; i++; continue; }
+      if (c === '\r'){ i++; continue; }
+      if (c === '\n'){ row.push(field); rows.push(row); row = []; field = ""; i++; continue; }
+      field += c; i++;
+    }
+    if (field.length > 0 || row.length > 0){ row.push(field); rows.push(row); }
+    return rows;
+  }
+  // Always re-reads the live file -- never trusts a stale in-memory copy,
+  // since another device or another app could have changed it since this
+  // page loaded. Resolves to [] both when the file doesn't exist yet and
+  // when it's empty/unparseable, so callers never need a separate
+  // "not found" branch.
+  function readUsersCsv(){
+    if (!state.rootHandle) return Promise.resolve([]);
+    return state.rootHandle.getFileHandle(USERS_CSV_NAME, { create: false }).then(function(fh){
+      return fh.getFile();
+    }).then(function(file){ return file.text(); }).then(function(text){
+      var rows = csvParseText(text);
+      if (!rows.length) return [];
+      var start = (rows[0] && String(rows[0][0] || "").trim().toLowerCase() === "name") ? 1 : 0;
+      var out = [];
+      for (var i = start; i < rows.length; i++){
+        var r = rows[i];
+        if (!r || !r.length || (r.length === 1 && r[0] === "")) continue; // trailing blank line
+        out.push({ name: r[0] || "", pin: r[1] || "", showInApps: r[2] || "" });
+      }
+      return out;
+    }, function(){ return []; }); // no file yet -- not an error
+  }
+  function writeUsersCsv(rows){
+    var lines = [USERS_CSV_HEADER];
+    rows.forEach(function(r){ lines.push([r.name, r.pin, r.showInApps]); });
+    var text = csvStringifyRows(lines);
+    return state.rootHandle.getFileHandle(USERS_CSV_NAME, { create: true }).then(function(fh){
+      return fh.createWritable();
+    }).then(function(w){ return w.write(text).then(function(){ return w.close(); }); });
+  }
+  function findUserRowCI(rows, name){
+    var n = String(name || "").trim().toLowerCase();
+    for (var i = 0; i < rows.length; i++){
+      if (String(rows[i].name || "").trim().toLowerCase() === n) return rows[i];
+    }
+    return null;
+  }
+
+  /* ---- numberpad (4-digit PIN entry) ----
+     A small, self-contained on-screen keypad modal. openNumberpad(opts)
+     returns a Promise that resolves with the 4-digit string once entered
+     (and, if opts.verify is given, only once verify(pin) resolves truthy --
+     a wrong PIN shakes the dialog and clears it for another attempt rather
+     than closing), or resolves null if the user cancels. Used for every PIN
+     step: verifying an existing name's PIN, and choosing/confirming a new
+     one -- entering a NAME (text) still goes through genericPrompt, only
+     the PIN itself is numberpad-only, per Andrew's own explicit split. */
+  var numberpadBackdrop = document.getElementById("numberpadBackdrop");
+  var numberpadTitleEl = document.getElementById("numberpadTitle");
+  var numberpadSubtitleEl = document.getElementById("numberpadSubtitle");
+  var numberpadDotsEl = document.getElementById("numberpadDots");
+  var numberpadGridEl = document.getElementById("numberpadGrid");
+  var numberpadCancelBtn = document.getElementById("numberpadCancel");
+  var NUMBERPAD_LENGTH = 4;
+  var numberpadState = null; // { entered:"", verify:fn|null, resolve:fn, busy:bool }
+
+  function renderNumberpadDots(){
+    numberpadDotsEl.innerHTML = "";
+    for (var i = 0; i < NUMBERPAD_LENGTH; i++){
+      var dot = document.createElement("div");
+      var filled = numberpadState && i < numberpadState.entered.length;
+      dot.style.cssText = "width:14px; height:14px; border-radius:50%; border:2px solid var(--border-strong); background:" + (filled ? "var(--accent)" : "transparent") + "; transition:background .1s;";
+      numberpadDotsEl.appendChild(dot);
+    }
+  }
+  function numberpadShakeAndClear(){
+    var box = numberpadBackdrop.querySelector(".modal-box");
+    box.classList.remove("numberpad-shake");
+    void box.offsetWidth; // restart the CSS animation
+    box.classList.add("numberpad-shake");
+    showToast("Incorrect PIN — try again.");
+    setTimeout(function(){
+      if (numberpadState){ numberpadState.entered = ""; numberpadState.busy = false; renderNumberpadDots(); }
+    }, 260);
+  }
+  function finishNumberpad(pin){
+    numberpadBackdrop.hidden = true;
+    var st = numberpadState; numberpadState = null;
+    if (st && st.resolve) st.resolve(pin);
+  }
+  function cancelNumberpad(){
+    if (!numberpadState) return;
+    numberpadBackdrop.hidden = true;
+    var st = numberpadState; numberpadState = null;
+    if (st && st.resolve) st.resolve(null);
+  }
+  function numberpadPressDigit(d){
+    if (!numberpadState || numberpadState.busy || numberpadState.entered.length >= NUMBERPAD_LENGTH) return;
+    numberpadState.entered += d;
+    renderNumberpadDots();
+    if (numberpadState.entered.length === NUMBERPAD_LENGTH){
+      var pin = numberpadState.entered;
+      var verify = numberpadState.verify;
+      if (!verify){ finishNumberpad(pin); return; }
+      numberpadState.busy = true;
+      Promise.resolve(verify(pin)).then(function(ok){
+        if (!numberpadState) return; // cancelled while verifying
+        if (ok) finishNumberpad(pin);
+        else numberpadShakeAndClear();
+      }, function(){
+        if (numberpadState) numberpadShakeAndClear();
+      });
+    }
+  }
+  function numberpadBackspace(){
+    if (!numberpadState || numberpadState.busy || !numberpadState.entered.length) return;
+    numberpadState.entered = numberpadState.entered.slice(0, -1);
+    renderNumberpadDots();
+  }
+  numberpadCancelBtn.addEventListener("click", cancelNumberpad);
+  numberpadBackdrop.addEventListener("click", function(e){ if (e.target === numberpadBackdrop) cancelNumberpad(); });
+  document.addEventListener("keydown", function(e){
+    if (!numberpadState || numberpadBackdrop.hidden) return;
+    if (e.key >= "0" && e.key <= "9"){ e.preventDefault(); numberpadPressDigit(e.key); }
+    else if (e.key === "Backspace"){ e.preventDefault(); numberpadBackspace(); }
+    else if (e.key === "Escape"){ e.preventDefault(); cancelNumberpad(); }
+  });
+  (function buildNumberpadGrid(){
+    var layout = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "back"];
+    layout.forEach(function(key){
+      var cell = document.createElement("button");
+      cell.type = "button";
+      cell.style.cssText = "font-size:18px; padding:12px 0;";
+      if (key === ""){
+        cell.style.visibility = "hidden"; cell.disabled = true;
+      } else if (key === "back"){
+        cell.className = "mbtn"; cell.textContent = "⌫"; cell.setAttribute("aria-label", "Backspace");
+        cell.addEventListener("click", numberpadBackspace);
+      } else {
+        cell.className = "mbtn"; cell.textContent = key;
+        cell.addEventListener("click", function(){ numberpadPressDigit(key); });
+      }
+      numberpadGridEl.appendChild(cell);
+    });
+  })();
+  function openNumberpad(opts){
+    opts = opts || {};
+    numberpadTitleEl.textContent = opts.title || "Enter PIN";
+    numberpadSubtitleEl.textContent = opts.subtitle || "";
+    numberpadSubtitleEl.style.display = opts.subtitle ? "" : "none";
+    numberpadState = { entered: "", verify: opts.verify || null, busy: false };
+    renderNumberpadDots();
+    numberpadBackdrop.hidden = false;
+    return new Promise(function(resolve){ numberpadState.resolve = resolve; });
+  }
+
+  /* ---- "show me in" app-list modal (checkboxes only, unchanged content from the old popup) ---- */
+  var identityAppChecksBackdrop = document.getElementById("identityAppChecksBackdrop");
+  var identityAppChecksList = document.getElementById("identityAppChecksList");
+  var identityAppChecksSaveBtn = document.getElementById("identityAppChecksSave");
+  var identityAppChecksCancelBtn = document.getElementById("identityAppChecksCancel");
+  var identityAppChecksResolve = null;
+  function openAppChecksModal(){
+    identityAppChecksList.innerHTML = "";
+    APP_CODES.forEach(function(pair){
+      var code = pair[0], label = pair[1];
+      var row = document.createElement("label");
+      row.style.cssText = "display:flex; align-items:center; gap:7px;";
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.value = code;
+      if (code === "InstallITP") cb.checked = true; // pre-checked: the app they're setting this up from
+      row.appendChild(cb);
+      row.appendChild(document.createTextNode(label));
+      identityAppChecksList.appendChild(row);
+    });
+    identityAppChecksBackdrop.hidden = false;
+    return new Promise(function(resolve){ identityAppChecksResolve = resolve; });
+  }
+  function closeAppChecksModal(value){
+    identityAppChecksBackdrop.hidden = true;
+    var r = identityAppChecksResolve; identityAppChecksResolve = null;
+    if (r) r(value);
+  }
+  identityAppChecksSaveBtn.addEventListener("click", function(){
+    var checked = Array.prototype.slice.call(identityAppChecksList.querySelectorAll("input[type=checkbox]:checked")).map(function(cb){ return cb.value; });
+    closeAppChecksModal(checked);
+  });
+  identityAppChecksCancelBtn.addEventListener("click", function(){ closeAppChecksModal(null); });
+  identityAppChecksBackdrop.addEventListener("click", function(e){ if (e.target === identityAppChecksBackdrop) closeAppChecksModal(null); });
+
+  /* ---- the identity selector itself: the <select> IS the button ----
+     Andrew, verbatim (2026-09-23): "implement the username as per the
+     delivery itp throughout the entire system, but instead of it opening a
+     popup, the button is the selector, when you pick a name it opens a
+     numberpad to input the pin (4 digit pin)." No more "Set your name"
+     button + separate popup -- picking a name from this dropdown directly
+     triggers the numberpad; picking "+ Add a new name..." starts the
+     new-name flow (name via genericPrompt, PIN chosen+confirmed via two
+     numberpad rounds, then the "show me in" list above). */
+  var identitySelector = document.getElementById("identitySelector");
+  var IDENTITY_NEW_VALUE = "__new__";
+  var IDENTITY_PLACEHOLDER_VALUE = "__none__";
+
+  function populateIdentitySelector(){
+    if (!identitySelector) return Promise.resolve();
+    return readUsersCsv().then(function(rows){
+      var names = rows.map(function(r){ return r.name; }).filter(Boolean);
+      names.sort(function(a, b){ return a.toLowerCase().localeCompare(b.toLowerCase()); });
+      identitySelector.innerHTML = "";
+      if (!deviceUserName || names.indexOf(deviceUserName) === -1){
+        var placeholder = document.createElement("option");
+        placeholder.value = IDENTITY_PLACEHOLDER_VALUE;
+        placeholder.textContent = "Set your name";
+        identitySelector.appendChild(placeholder);
+      }
+      names.forEach(function(n){
+        var opt = document.createElement("option");
+        opt.value = n; opt.textContent = n;
+        identitySelector.appendChild(opt);
+      });
+      var addOpt = document.createElement("option");
+      addOpt.value = IDENTITY_NEW_VALUE; addOpt.textContent = "+ Add a new name…";
+      identitySelector.appendChild(addOpt);
+      identitySelector.value = (deviceUserName && names.indexOf(deviceUserName) !== -1) ? deviceUserName : IDENTITY_PLACEHOLDER_VALUE;
+    }, function(){ /* CSV not readable yet (no root folder chosen) -- leave it empty */ });
+  }
+  function revertIdentitySelector(previousValue){
+    if (!identitySelector) return;
+    var hasOpt = Array.prototype.some.call(identitySelector.options, function(o){ return o.value === previousValue; });
+    identitySelector.value = hasOpt ? previousValue : IDENTITY_PLACEHOLDER_VALUE;
+  }
+  function beginPinVerifyFlow(name, previousValue){
+    return openNumberpad({
+      title: "Enter PIN",
+      subtitle: "for “" + name + "”",
+      verify: function(pin){
+        return readUsersCsv().then(function(rows){
+          var row = findUserRowCI(rows, name);
+          return !!(row && row.pin === pin);
+        });
+      }
+    }).then(function(pin){
+      if (pin === null){ revertIdentitySelector(previousValue); return; }
+      return setDeviceUserName(name).then(function(saved){
+        deviceUserName = saved;
+        updateDeviceUserNameText();
+        showToast("Checklists on this device will be attributed to “" + saved + "”.");
+      });
+    }).catch(function(err){
+      console.error("Checking PIN failed:", err);
+      showToast("Couldn't read utzline-users.csv.");
+      revertIdentitySelector(previousValue);
+    });
+  }
+  function beginAddNewIdentityFlow(previousValue){
+    return genericPrompt("New name").then(function(rawName){
+      if (rawName === null){ revertIdentitySelector(previousValue); return; }
+      var newName = sanitizeUserName(rawName);
+      if (!newName){ showToast("Enter a name first."); revertIdentitySelector(previousValue); return; }
+      return readUsersCsv().then(function(rows){
+        if (findUserRowCI(rows, newName)){
+          showToast("“" + newName + "” already exists — pick it from the list and enter its PIN instead.");
+          revertIdentitySelector(previousValue);
+          return;
+        }
+        return openNumberpad({ title: "Choose a 4-digit PIN", subtitle: "for “" + newName + "”" }).then(function(pin1){
+          if (pin1 === null){ revertIdentitySelector(previousValue); return; }
+          return openNumberpad({
+            title: "Confirm PIN",
+            subtitle: "for “" + newName + "”",
+            verify: function(p){ return p === pin1; }
+          }).then(function(pin2){
+            if (pin2 === null){ revertIdentitySelector(previousValue); return; }
+            return openAppChecksModal().then(function(checked){
+              if (checked === null){ revertIdentitySelector(previousValue); return; }
+              return readUsersCsv().then(function(freshRows){
+                if (findUserRowCI(freshRows, newName)){
+                  showToast("“" + newName + "” already exists now — try again and pick it from the list.");
+                  revertIdentitySelector(previousValue);
+                  return;
+                }
+                freshRows.push({ name: newName, pin: pin1, showInApps: checked.join(";") });
+                return writeUsersCsv(freshRows).then(function(){
+                  return setDeviceUserName(newName);
+                }).then(function(saved){
+                  deviceUserName = saved;
+                  updateDeviceUserNameText();
+                  return populateIdentitySelector();
+                }).then(function(){
+                  showToast("Checklists on this device will be attributed to “" + deviceUserName + "”.");
+                });
+              });
+            });
+          });
         });
       });
+    }).catch(function(err){
+      console.error("Adding a new name/PIN failed:", err);
+      showToast("Couldn't save that to utzline-users.csv.");
+      revertIdentitySelector(previousValue);
+    });
+  }
+  if (identitySelector){
+    identitySelector.addEventListener("change", function(){
+      var picked = identitySelector.value;
+      var previous = (deviceUserName && Array.prototype.some.call(identitySelector.options, function(o){ return o.value === deviceUserName; })) ? deviceUserName : IDENTITY_PLACEHOLDER_VALUE;
+      if (picked === IDENTITY_PLACEHOLDER_VALUE) return; // re-selecting the placeholder itself -- no-op
+      if (picked === IDENTITY_NEW_VALUE) beginAddNewIdentityFlow(previous);
+      else if (picked !== deviceUserName) beginPinVerifyFlow(picked, previous);
     });
   }
 
@@ -1470,6 +1895,7 @@ body.plan-fullscreen .plan-viewport{
   /* ============================== folder picking / reconnect ============================== */
   var reconnectLabel = document.getElementById("reconnectLabel");
   function afterRootReady(){
+    populateIdentitySelector(); // needs state.rootHandle to read utzline-users.csv -- best-effort, never blocks
     return populateProjectList().then(function(){ showScreen("Projects"); });
   }
   function tryRestoreRoot(){
@@ -3202,7 +3628,7 @@ body.plan-fullscreen .plan-viewport{
     y += sigBlockH + 10;
 
     doc.setFont("helvetica", "normal").setFontSize(7).setTextColor(140);
-    doc.text("Generated by UTZLINE ITP — " + new Date().toLocaleString(), margin, pageH - 16);
+    doc.text("Generated by UTZLINE Install ITP — " + new Date().toLocaleString(), margin, pageH - 16);
 
     // ---- photos, appended at the very end (2026-09-23, Andrew: "This will
     // attach them at the very end of each specific ITP (scaled down to fit
@@ -3385,7 +3811,7 @@ body.plan-fullscreen .plan-viewport{
   /* ============================== boot ============================== */
   if (!window.showDirectoryPicker){
     document.body.innerHTML = '<main><div class="setup-card"><h2>Browser not supported</h2>' +
-      '<p class="hint">UTZLINE ITP needs a browser with File System Access support (Chrome, Edge, or the installed Android/desktop app). Please open it there instead.</p></div></main>';
+      '<p class="hint">UTZLINE Install ITP needs a browser with File System Access support (Chrome, Edge, or the installed Android/desktop app). Please open it there instead.</p></div></main>';
   } else {
     loadCompanyLogo();
     tryRestoreRoot();
@@ -3404,7 +3830,7 @@ body.plan-fullscreen .plan-viewport{
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", function () {
     navigator.serviceWorker.register("./service-worker.js").catch(function (err) {
-      console.warn("UTZLINE ITP: service worker registration failed", err);
+      console.warn("UTZLINE Install ITP: service worker registration failed", err);
     });
   });
 }

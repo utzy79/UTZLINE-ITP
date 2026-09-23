@@ -172,8 +172,33 @@
 // own `history` array (with a one-time backfill for a record saved before
 // this field existed), so UTZLINE Projects' Register can show a full
 // status-change history on hover.
+//
+// v15, 2026-09-23 (same day): the shared name+PIN identity registry, ported
+// verbatim from UTZLINE Delivery ITP (the reference implementation), per
+// Andrew's own instruction: "implement the username as per the delivery itp
+// throughout the entire system, but instead of it opening a popup, the
+// button is the selector, when you pick a name it opens a numberpad to
+// input the pin (4 digit pin)." This app's old "Set your name" button plus
+// a single freeform-text genericPrompt (no PIN at all) is gone. The native
+// <select id="identitySelector"> on the Projects screen IS the button --
+// its own dropdown lists every known name plus "+ Add a new name...", and
+// choosing an existing name immediately opens a real on-screen 0-9
+// numberpad (#numberpadBackdrop) to verify its 4-digit PIN, rather than a
+// popup. Adding a brand-new name still asks for the name as plain text via
+// this app's own genericPrompt, then the PIN is chosen and confirmed via
+// two numberpad rounds, then a small "show me in" app-tickbox modal
+// (InstallITP pre-checked) is shown. Names/PINs live in a new shared CSV,
+// <ProjectsRoot>/utzline-users.csv ("Name,PIN,ShowInApps", PIN in plain
+// text -- reference-only attribution, not real access control, so Andrew
+// can inspect/edit it directly) -- the SAME file every app in the family
+// reads/writes, so a name added from any app shows up in all of them. The
+// underlying per-device "utzline-identity" IndexedDB mechanism (shared
+// cross-app on the same origin already) is completely unchanged -- only
+// what triggers the write on this screen. Covered end to end by the new
+// run_itp_identity_pin.js; this app's other existing smoke tests re-run
+// clean afterward.
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v14";
+var CACHE_NAME = "utzline-itp-cache-v16";
 
 var PRECACHE_URLS = [
   "./",

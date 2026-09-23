@@ -1,6 +1,6 @@
 {
-  "name": "UTZLINE ITP",
-  "short_name": "UTZLINE ITP",
+  "name": "UTZLINE Install ITP",
+  "short_name": "Install ITP",
   "description": "Joinery installation ITP checklists for UTZLINE Site Measure projects: browse a project's folder down to a room, open or start a joinery item's checklist, sign it off on a phone or tablet, and export it straight to PDF.",
   "start_url": "./index.html",
   "scope": "./",
