@@ -1,6 +1,10 @@
 # UTZLINE ITP — installable app
 
-**Current version: v10** (its own independent version line, separate from Site Measure/Viewer's — bump this line every time a new build ships.)
+**Current version: v14** (its own independent version line, separate from Site Measure/Viewer's — bump this line, and add a dated entry below, every time a new build ships. See `next-version-notes.md` in the project for the full per-version changelog if a gap ever needs filling in.)
+
+**v14 (2026-09-23):** adds this app's FIRST "Layers" control to the Level Plan screen — a small button + one-checkbox popover, currently offering just "Delivery locations" (off by default). Switching it on reads UTZLINE Delivery ITP's own checklist files for every joinery item on the current level (read-only — this app never writes to Delivery ITP's own folder, in either a flat or a legacy project) and renders each item's saved `deliveryLocationPin` as an inert, amber, non-interactive reference pin — visually distinct from this app's own green markers and the shared 📏/📦/🚚/🏆 status badges, and structurally impossible to tap/drag/select (same "reference layer, drawn underneath the real interactive objects" convention as Site Measure/Viewer's own "Site Measure layers" panel). `service-worker.js` cache bumped to `utzline-itp-cache-v14`.
+
+**v11–v13 (2026-09-23):** this app's own level-list exclusion was updated across three small releases to also skip the new `itp-delivery` folder (UTZLINE Delivery ITP's own project-wide data folder), so it's never mistaken for a Level anywhere in this app. No other functional change in v11–v13 — see `next-version-notes.md` for the exact detail of each.
 
 **v10 (2026-09-23):** checklist sign-off now auto-advances the shared `joinery-status.json` record (project root, works in both flat and legacy projects) to "installed" the moment both signoff fields are filled in, forward-only, with backfill for a checklist signed off before this existed. The shared status badge (📏/📦/🏆) now renders on this app's own Level Plan markers too, alongside the existing per-item ✓/✕ indicator. Also adds a read-only "View job note" button to the checklist screen, listing PDFs Site Measure/Viewer have attached to that joinery item.
 
@@ -112,38 +116,37 @@ moment it exists, even before its checklist has been touched.
 
 ## Getting this installed as its own app
 
-Same pattern as the Viewer: a subfolder of the same GitHub Pages site
-the editor and Viewer already live on, so all three install as
-separate, independent apps from one repo:
+**This app lives in its own separate GitHub repository** — not a
+subfolder of Site Measure's, the Viewer's, or any sibling app's repo.
+Every app in the UTZLINE family (Site Measure, Viewer, Install ITP,
+Manufacture ITP, UTZLINE Projects, UTZLINE Scheduler, UTZLINE Delivery
+ITP) is its own repo with its own GitHub Pages URL.
 
-1. In the `UTZLINE-Site-Measure` repo, add everything from this folder
-   under an
-   [`itp-reports/`](https://github.com/utzy79/UTZLINE-Site-Measure/tree/main/itp-reports)
-   subfolder — so it ends up live at
-   [`https://utzy79.github.io/UTZLINE-Site-Measure/itp-reports/`](https://utzy79.github.io/UTZLINE-Site-Measure/itp-reports/).
-   Keep the `icons/` folder structure intact.
+1. In this app's own repo, add every file from this bundle at the repo
+   **root** (not inside a subfolder) — keep the `icons/` folder
+   structure intact. It'll go live at that repo's own GitHub Pages URL.
 2. Open that URL once in a normal browser tab while online, so the
    service worker can cache it for offline use.
 3. Install it: Chrome/Edge's install icon in the address bar ("Install
-   this site as an app") while on the `itp-reports/` URL specifically.
-   Because it has its own `manifest.json` (its own name and icons —
-   green, to tell it apart from the editor's orange and the Viewer's
-   blue), Chrome and Windows/Android treat it as a wholly separate,
-   independently installable app.
+   this site as an app"). Because it has its own `manifest.json` (its
+   own name and icons — green, to tell it apart from every sibling
+   app's own colour), Chrome and Windows/Android treat it as a wholly
+   separate, independently installable app.
 4. On a phone or tablet — the main way this one's meant to be used —
    "Install this site as an app" is under the browser's own menu
    (Chrome: ⋮ → "Add to Home screen" / "Install app").
 
 ## Updating this app
 
-Same process as the other two: unzip whatever's shared in chat, upload
-the files into this app's own `itp-reports/` folder in the repo
-(overwriting existing ones, keeping `icons/` intact), commit, wait for
-GitHub Pages to redeploy, then close and reopen the installed app to
-pick up the change. Bump `service-worker.js`'s `CACHE_NAME` (and the version note
-at the top of that file) with every change that ships, same convention
-as the other two apps, so installed copies actually pick up the update
-instead of serving a stale cached copy forever.
+Same process every time a new build ships: unzip whatever's shared in
+chat, upload the files into this app's own repo root (overwriting
+existing ones, keeping `icons/` intact), commit, wait for GitHub Pages
+to redeploy, then close and reopen the installed app to pick up the
+change. **Bump the "Current version" line at the top of this README
+(with a dated changelog entry) and `service-worker.js`'s `CACHE_NAME`
+every single time a change ships** — both need to move together, or
+installed copies keep serving a stale cached build and this README
+stops being a reliable record of what's actually live.
 
 ## Things worth knowing
 

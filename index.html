@@ -348,6 +348,26 @@ body.plan-fullscreen .plan-viewport{
   position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
   padding:24px; text-align:center; font-size:13px; color:var(--text-secondary);
 }
+/* ---- "Layers" control (2026-09-23) -- this app's first: a small toggle
+   for read-only reference layers on top of the Level Plan, starting with
+   Delivery ITP's own "Delivery locations" pins. See renderDeliveryLocationsLayer's
+   own comment. ---- */
+.plan-layers-btn{
+  position:absolute; right:10px; top:10px; z-index:5;
+  font:inherit; font-size:12.5px; padding:7px 12px; border-radius:999px;
+  border:1px solid var(--border-strong); background:var(--surface-1); color:var(--text-primary);
+  cursor:pointer; box-shadow:var(--shadow);
+}
+.plan-layers-btn.active{ border-color:var(--accent); color:var(--accent); }
+.plan-layers-panel{
+  position:absolute; right:10px; top:48px; z-index:6; display:none;
+  min-width:190px; padding:10px 12px; border-radius:10px;
+  border:1px solid var(--border-strong); background:var(--surface-1); box-shadow:var(--shadow);
+}
+.plan-layers-panel.open{ display:block; }
+.plan-layers-row{ display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-primary); }
+.plan-layers-row input[type="checkbox"]{ width:16px; height:16px; flex:none; }
+.plan-layers-hint{ margin:6px 0 0; font-size:11.5px; color:var(--text-secondary); }
 
 /* ---- company logo (Projects screen) ---- */
 .logo-setting-row{
@@ -480,10 +500,27 @@ body.plan-fullscreen .plan-viewport{
         <g id="levelPlanWorld">
           <image id="levelPlanImage" href=""></image>
           <g id="levelPlanTiles"></g>
+          <!-- Delivery ITP's own delivery-location pins (2026-09-23, read-only
+               reference layer -- see renderDeliveryLocationsLayer's own
+               comment) -- sits UNDER the real, interactive joinery markers
+               below, same "reference layer renders behind the real objects"
+               convention as Site Measure/Viewer's own "Site Measure layers"
+               panel (source.html's renderOverlayLayers). Empty and
+               pointer-events:none whenever the "Delivery locations"
+               checkbox is off (the default). -->
+          <g id="deliveryLocationsLayer" style="pointer-events:none;"></g>
           <g id="levelPlanMarkers"></g>
         </g>
       </svg>
       <button type="button" class="plan-rooms-btn" id="planViewRoomListBtn">Room list</button>
+      <button type="button" class="plan-layers-btn" id="planLayersBtn" aria-label="Toggle plan layers">Layers</button>
+      <div class="plan-layers-panel" id="planLayersPanel">
+        <label class="plan-layers-row">
+          <input type="checkbox" id="deliveryLocationsLayerCheckbox">
+          <span>Delivery locations</span>
+        </label>
+        <p class="plan-layers-hint">Read-only pins from Delivery ITP showing where each item was actually dropped off on site.</p>
+      </div>
       <div class="plan-zoom-controls">
         <button type="button" class="plan-zoom-btn" id="planZoomInBtn" aria-label="Zoom in">+</button>
         <button type="button" class="plan-zoom-btn" id="planZoomOutBtn" aria-label="Zoom out">&minus;</button>
@@ -1653,6 +1690,7 @@ body.plan-fullscreen .plan-viewport{
   var levelPlanImageEl = document.getElementById("levelPlanImage");
   var levelPlanTilesG = document.getElementById("levelPlanTiles");
   var levelPlanMarkersG = document.getElementById("levelPlanMarkers");
+  var deliveryLocationsLayerG = document.getElementById("deliveryLocationsLayer");
   var planViewportEl = document.getElementById("planViewportEl");
 
   function levelSaveFilename(name){ return sanitizeFileBase(name) + ".utzline.json"; }
@@ -1927,8 +1965,167 @@ body.plan-fullscreen .plan-viewport{
         entry.refs.jobStatusBadge.style.display = icon ? "" : "none";
       });
     });
+    // "Delivery locations" reference layer (2026-09-23) -- see
+    // renderDeliveryLocationsLayer's own comment further down. Cheap no-op
+    // (clears the layer and returns) whenever the checkbox is off, which is
+    // the common case, so this never costs anything unless someone's
+    // actually switched it on.
+    renderDeliveryLocationsLayer(plan);
     return Promise.resolve();
   }
+
+  /* ============================== "Delivery locations" layer (2026-09-23) ==============================
+     Andrew: "this is then to be viewable by the install itp software as a
+     seperate selectable layer" -- referring to UTZLINE Delivery ITP's new
+     interactive delivery-location PIN feature (see that app's own README/
+     index.html, `data.deliveryLocationPin = {x,y}` on a joinery item's own
+     checklist JSON). This app's FIRST "Layers" control: a small toggle
+     ("Layers" button + a one-checkbox popover) on the Level Plan screen
+     that, when switched on, reads every CURRENT-level joinery item's own
+     Delivery ITP checklist file (read-only -- this app never creates or
+     writes anything under Delivery ITP's own folder) and renders whichever
+     ones have a saved pin as an INERT, amber, read-only reference marker --
+     same "reference layer sits underneath/alongside the real interactive
+     objects, tinted, non-interactive" convention Site Measure/Viewer's own
+     "Site Measure layers" panel already established (see
+     renderOverlayLayers in that app's source.html: a pointer-events:none
+     group, drawn from foreign data that never touches this app's own
+     selectable state). Concretely here: deliveryLocationsLayerG (see the
+     SVG markup -- sits BEFORE/under levelPlanMarkersG) carries no
+     "plan-marker" class and no data-room/data-code attributes, so it's
+     structurally invisible to planPointerEnd's own tap handling below --
+     it can never be tapped, dragged, or opened no matter what.
+
+     Off by default (Andrew didn't specify either way) -- a brand-new
+     cross-app overlay nobody has asked to see yet defaulting to visible
+     felt like more surprise than help; the toggle is right there and
+     disclosed in the popover's own hint text. Not persisted anywhere
+     (resets to off on every fresh load) -- this app has no existing
+     per-device UI-preference store to hang it on, and it's cheap enough to
+     just flip back on the rare visit that wants it. */
+  var installPlanLayers = { deliveryLocations: false };
+  // Same (level, room, joineryCode)-scoped filename Delivery ITP itself
+  // uses for its own checklist files -- this app's own itpChecklistFileNameFor
+  // (see its own comment) already matches that shape exactly (isFlat picks
+  // the same "Level - Room - Code.json" vs "Code.json" split), so the only
+  // new thing needed here is pointing at DELIVERY ITP's own folder instead
+  // of this app's own itp-install one.
+  function deliveryItpFolderNameLegacy(){ return "itp-delivery"; }
+  function deliveryItpAppBranchNameFlat(){ return "Delivery ITP"; }
+  function getDeliveryItpChecklistsDirFlat(projectHandle){
+    return projectHandle.getDirectoryHandle("Project Saves", { create: false }).then(function(psH){
+      return psH.getDirectoryHandle("UTZLINE ITP", { create: false });
+    }).then(function(branchH){
+      return branchH.getDirectoryHandle(deliveryItpAppBranchNameFlat(), { create: false });
+    });
+  }
+  // Resolves this one item's own deliveryLocationPin ({x,y}) or null --
+  // null for "no Delivery ITP checklist file for this item yet", "that
+  // checklist has no pin saved", or any read error; never creates a
+  // folder/file, and never throws. Reuses state.projectIsFlat, this app's
+  // own already-established flat/legacy detection (isFlatProject), exactly
+  // as the task calls for -- a project is always fully one shape or the
+  // other, never mixed, so the same flag that already picks this app's OWN
+  // checklist path also picks Delivery ITP's.
+  function readDeliveryLocationPin(levelName, roomName, joineryCode){
+    if (!joineryCode) return Promise.resolve(null);
+    var fileName = itpChecklistFileNameFor(levelName, roomName, joineryCode, state.projectIsFlat);
+    var filePromise = state.projectIsFlat
+      ? getDeliveryItpChecklistsDirFlat(state.projectHandle).then(function(dirH){ return dirH.getFileHandle(fileName, { create: false }); })
+      : state.projectHandle.getDirectoryHandle(deliveryItpFolderNameLegacy(), { create: false }).then(function(delH){
+          return delH.getDirectoryHandle(levelName, { create: false });
+        }).then(function(levelH){
+          return levelH.getDirectoryHandle(roomName, { create: false });
+        }).then(function(roomH){
+          return roomH.getFileHandle(fileName, { create: false });
+        });
+    return filePromise.then(function(fh){ return fh.getFile(); }).then(function(f){ return f.text(); }).then(function(text){
+      var data = null;
+      try{ data = JSON.parse(text); }catch(e){ data = null; }
+      var pin = data && data.deliveryLocationPin;
+      return (pin && typeof pin.x === "number" && typeof pin.y === "number") ? { x: pin.x, y: pin.y } : null;
+    }).catch(function(){ return null; }); // no Delivery ITP checklist for this item yet -- not an error
+  }
+  // Bold amber, deliberately Delivery ITP's OWN accent colours (#b8791a
+  // light / #f0b23e dark) rather than this app's own green --accent, so a
+  // delivery-location pin never reads as one of Install ITP's own markers,
+  // and a plain filled circle (no white status-circle/code-label the way
+  // buildPlanMarkerEl's real markers have) so it's visually a different
+  // KIND of thing at a glance, not just a different colour.
+  function deliveryPinAccentColor(){
+    var theme = document.documentElement.getAttribute("data-theme");
+    var isDark = theme === "dark" || (theme !== "light" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    return isDark ? "#f0b23e" : "#b8791a";
+  }
+  function buildDeliveryLocationPinEl(x, y){
+    var ns = "http://www.w3.org/2000/svg";
+    var accent = deliveryPinAccentColor();
+    var g = document.createElementNS(ns, "g");
+    g.setAttribute("class", "delivery-location-pin"); // deliberately NOT "plan-marker" -- see this layer's own top comment
+    var halo = document.createElementNS(ns, "circle");
+    halo.setAttribute("cx", x); halo.setAttribute("cy", y); halo.setAttribute("r", 24);
+    halo.setAttribute("fill", "#fff"); halo.setAttribute("opacity", "0.8");
+    g.appendChild(halo);
+    var dot = document.createElementNS(ns, "circle");
+    dot.setAttribute("cx", x); dot.setAttribute("cy", y); dot.setAttribute("r", 17);
+    dot.setAttribute("fill", accent);
+    dot.setAttribute("stroke", "#fff");
+    dot.setAttribute("stroke-width", "3");
+    g.appendChild(dot);
+    var inner = document.createElementNS(ns, "circle");
+    inner.setAttribute("cx", x); inner.setAttribute("cy", y); inner.setAttribute("r", 6);
+    inner.setAttribute("fill", "#fff");
+    g.appendChild(inner);
+    return g;
+  }
+  // Reads every joinery item ON THE CURRENT LEVEL's own Delivery ITP
+  // checklist (in parallel) and renders a pin for whichever ones have one
+  // saved. A stale/slow read never blocks the rest of the plan screen --
+  // this only ever touches deliveryLocationsLayerG, nothing else.
+  function renderDeliveryLocationsLayer(plan){
+    deliveryLocationsLayerG.innerHTML = "";
+    if (!installPlanLayers.deliveryLocations || !plan || !Array.isArray(plan.roomlinks)) return Promise.resolve();
+    var levelName = state.levelName;
+    var seen = {}; // de-dupe: two markers sharing (room, code) would otherwise draw the same pin twice
+    var items = plan.roomlinks.filter(function(o){
+      if (!o || !o.joineryCode) return false;
+      var key = o.roomName + "\u0001" + o.joineryCode;
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+    return Promise.all(items.map(function(o){
+      return readDeliveryLocationPin(levelName, o.roomName, o.joineryCode);
+    })).then(function(pins){
+      // A layer toggle flipped OFF (or a fresh navigation) while these
+      // reads were in flight must not paint stale pins in afterward.
+      if (!installPlanLayers.deliveryLocations || currentLevelPlan !== plan) return;
+      pins.forEach(function(pin){
+        if (pin) deliveryLocationsLayerG.appendChild(buildDeliveryLocationPinEl(pin.x, pin.y));
+      });
+    });
+  }
+  var planLayersBtn = document.getElementById("planLayersBtn");
+  var planLayersPanel = document.getElementById("planLayersPanel");
+  var deliveryLocationsLayerCheckbox = document.getElementById("deliveryLocationsLayerCheckbox");
+  deliveryLocationsLayerCheckbox.checked = installPlanLayers.deliveryLocations;
+  var planLayersPanelOpen = false;
+  function setPlanLayersPanelOpen(open){
+    planLayersPanelOpen = open;
+    planLayersPanel.classList.toggle("open", open);
+    planLayersBtn.classList.toggle("active", open);
+  }
+  planLayersBtn.addEventListener("click", function(){ setPlanLayersPanelOpen(!planLayersPanelOpen); });
+  document.addEventListener("click", function(e){
+    if (!planLayersPanelOpen) return;
+    if (e.target === planLayersBtn || planLayersBtn.contains(e.target)) return;
+    if (e.target === planLayersPanel || planLayersPanel.contains(e.target)) return;
+    setPlanLayersPanelOpen(false);
+  });
+  deliveryLocationsLayerCheckbox.addEventListener("change", function(){
+    installPlanLayers.deliveryLocations = deliveryLocationsLayerCheckbox.checked;
+    renderDeliveryLocationsLayer(currentLevelPlan);
+  });
 
   function planPointFromEvent(e){ return { x: e.clientX, y: e.clientY }; }
 
