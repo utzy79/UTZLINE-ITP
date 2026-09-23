@@ -160,8 +160,20 @@
 // Manufacture ITP -- both apps' auto-status wiring into flushPendingSave/
 // openItem is byte-for-byte the same shape. This app's own existing smoke
 // tests and the full cross-app regression suite re-run clean afterward.
+//
+// v11, 2026-09-23 (same day): the shared joinery-status.json pipeline now
+// has two more stages (Andrew, on UTZLINE Projects' Joinery Register) --
+// "in_manufacture" (Manufacture ITP checklist opened, not yet signed) and
+// "delivered" (a placeholder reserved for a future Delivery ITP app -- this
+// app writes neither). This app's own "installed" trigger is unchanged
+// except it now prefers the real signed-in device identity over the plain
+// "Install ITP" app-name fallback when attributing the change, and every
+// forward transition now appends a {status, at, by} entry to the record's
+// own `history` array (with a one-time backfill for a record saved before
+// this field existed), so UTZLINE Projects' Register can show a full
+// status-change history on hover.
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v11";
+var CACHE_NAME = "utzline-itp-cache-v12";
 
 var PRECACHE_URLS = [
   "./",
