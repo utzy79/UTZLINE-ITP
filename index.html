@@ -263,6 +263,16 @@ textarea.notes-box{
   color:var(--text-primary); resize:vertical;
 }
 
+/* ---- photos (2026-09-23) ---- */
+.photo-gallery{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+.photo-thumb{ position:relative; width:96px; height:96px; border-radius:8px; overflow:hidden; border:1px solid var(--border-strong); background:var(--surface-1); }
+.photo-thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+.photo-thumb-remove{
+  position:absolute; top:2px; right:2px; width:20px; height:20px; border-radius:50%;
+  border:none; background:rgba(0,0,0,.6); color:#fff; font-size:14px; line-height:1;
+  cursor:pointer; display:flex; align-items:center; justify-content:center;
+}
+
 /* ---- sign-off ---- */
 .signoff-block{
   border:1px solid var(--border-strong); border-radius:9px; padding:12px;
@@ -539,6 +549,18 @@ body.plan-fullscreen .plan-viewport{
       </div>
       <div class="sig-pad-wrap"><canvas class="sig-canvas"></canvas><div class="sig-pad-empty-hint">Sign here</div></div>
       <div class="sig-actions"><button class="mbtn sig-clear-btn">Clear signature</button></div>
+    </div>
+
+    <!-- Photos (2026-09-23, Andrew: "add an 'Add Photo' button to the ITPS,
+         This will attach them at the very end of each specific ITP (scaled
+         down to fit multiple on an a3 page)") -- attached directly to this
+         checklist's own JSON, appended as extra page(s) at the very end of
+         the exported PDF, see exportChecklistPdf's own comment. -->
+    <h2 style="font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-secondary); margin-top:18px;">Photos</h2>
+    <div class="photo-gallery" id="photoGalleryEl"></div>
+    <div class="actions-row">
+      <button class="mbtn" id="addPhotoBtn">Add photo</button>
+      <input type="file" id="photoFileInput" accept="image/*" multiple capture="environment" style="display:none;">
     </div>
 
     <div class="actions-row">
@@ -853,12 +875,28 @@ body.plan-fullscreen .plan-viewport{
      never back -- see joineryStatusRank/setJoineryStatusForward below.
      This app only ever writes "installed" here (on Install ITP sign-off);
      it reads the whole file to render the icon on its own Level Plan
-     screen regardless of who set it. */
+     screen regardless of who set it.
+     A record may ALSO carry an independent jobNote:true flag (2026-09-23,
+     see source.html's own addJobNote/markJobNoteAdded comment) -- a job
+     note attached from Site Measure/the Viewer, completely decoupled from
+     this status field. This app never sets that flag, only reads it, via
+     joineryDisplayIcon below, for the same reason it reads status. */
   function joineryStatusRank(status){
     return status === "installed" ? 3 : status === "manufactured" ? 2 : status === "measured" ? 1 : 0;
   }
   function joineryStatusIcon(status){
     return status === "installed" ? "🏆" : status === "manufactured" ? "📦" : status === "measured" ? "📏" : "";
+  }
+  // Mirrors source.html's own joineryDisplayIcon exactly -- see its comment
+  // for the priority ordering (installed/manufactured beat a job note,
+  // which beats a bare "measured").
+  function joineryDisplayIcon(rec){
+    if (!rec) return "";
+    if (rec.status === "installed") return "🏆";
+    if (rec.status === "manufactured") return "📦";
+    if (rec.jobNote) return "🛠️";
+    if (rec.status === "measured") return "📏";
+    return "";
   }
   function readJoineryStatuses(projectHandle){
     if (!projectHandle) return Promise.resolve([]);
@@ -1640,9 +1678,19 @@ body.plan-fullscreen .plan-viewport{
     applyPlanView();
   }
 
+  // Any row answered "No" -- shared by computeItemItpStatus/
+  // computeRoomItpStatus below and checklistProgress further down. Andrew,
+  // 2026-09-23: "if there is anything marked as NO on an ITP, it doesnt get
+  // marked off as finished" -- both signatures present is no longer enough
+  // on its own; a flagged "No" answer blocks "complete"/"signed off"
+  // regardless of sign-off.
+  function checklistHasNoAnswer(data){
+    return !!(data && Array.isArray(data.rows) && data.rows.some(function(r){ return r && r.status === "no"; }));
+  }
   // Status for a single joinery item's own marker -- complete only once
-  // THAT item's own checklist file has both sign-off signatures; not
-  // started yet (no file) or partially filled in both read as incomplete.
+  // THAT item's own checklist file has both sign-off signatures AND no row
+  // is flagged "No"; not started yet (no file), partially filled, or
+  // flagged both read as incomplete.
   // Never creates the itp/<level>/<room> folder or the item file as a side
   // effect of just looking -- a plan being previewed shouldn't leave empty
   // folders/files behind for items nobody has opened yet.
@@ -1659,7 +1707,7 @@ body.plan-fullscreen .plan-viewport{
         try{ data = JSON.parse(text); }catch(e){ data = null; }
         var complete = !!(data && data.signoff &&
           data.signoff.installer && data.signoff.installer.sig &&
-          data.signoff.supervisor && data.signoff.supervisor.sig);
+          data.signoff.supervisor && data.signoff.supervisor.sig) && !checklistHasNoAnswer(data);
         return { complete: complete, total: 1 };
       }).catch(function(){ return { complete: false, total: 0 }; }); // not started yet
   }
@@ -1691,7 +1739,7 @@ body.plan-fullscreen .plan-viewport{
               try{ data = JSON.parse(text); }catch(e){ data = null; }
               var itemComplete = !!(data && data.signoff &&
                 data.signoff.installer && data.signoff.installer.sig &&
-                data.signoff.supervisor && data.signoff.supervisor.sig);
+                data.signoff.supervisor && data.signoff.supervisor.sig) && !checklistHasNoAnswer(data);
               acc.total++;
               if (!itemComplete) acc.anyIncomplete = true;
               return acc;
@@ -1746,20 +1794,22 @@ body.plan-fullscreen .plan-viewport{
     glyph.textContent = "…"; // ellipsis placeholder while status loads
     g.appendChild(glyph);
 
-    // Job-status badge (📏/📦/🏆, from the shared joinery-status.json --
-    // see setJoineryStatusForward's own comment) -- a small emoji sitting
-    // at the marker's own top-right, entirely separate from the statusCircle/
-    // glyph pair above (which is THIS app's own checklist-complete ✓/✕
-    // indicator, unrelated to the cross-app measured/manufactured/installed
-    // pipeline). Empty/hidden until renderLevelPlanScreen resolves a real
+    // Status/job-note badge (🏆/📦/🛠️/📏, from the shared
+    // joinery-status.json -- see joineryDisplayIcon's own comment),
+    // entirely separate from the statusCircle/glyph pair above (which is
+    // THIS app's own checklist-complete ✓/✕ indicator, unrelated to the
+    // cross-app pipeline). Andrew, 2026-09-23: "icons to be bigger (same
+    // size as the dot, overlays over the dot)" -- centered directly on the
+    // marker at its own full diameter, not offset to a corner as originally
+    // shipped. Empty/hidden until renderLevelPlanScreen resolves a real
     // status for this item.
     var jobStatusBadge = document.createElementNS(ns, "text");
     jobStatusBadge.setAttribute("class", "marker-jobstatus-badge");
-    jobStatusBadge.setAttribute("x", obj.x + r * 0.78);
-    jobStatusBadge.setAttribute("y", obj.y - r * 0.78);
+    jobStatusBadge.setAttribute("x", obj.x);
+    jobStatusBadge.setAttribute("y", obj.y);
     jobStatusBadge.setAttribute("dy", "0.35em");
     jobStatusBadge.setAttribute("text-anchor", "middle");
-    jobStatusBadge.setAttribute("font-size", Math.round(r * 1.15));
+    jobStatusBadge.setAttribute("font-size", Math.round(r * 2));
     jobStatusBadge.setAttribute("paint-order", "stroke");
     jobStatusBadge.setAttribute("stroke", "#fff");
     jobStatusBadge.setAttribute("stroke-width", "3");
@@ -1836,7 +1886,7 @@ body.plan-fullscreen .plan-viewport{
     readJoineryStatuses(state.projectHandle).then(function(list){
       markerRefs.forEach(function(entry){
         var rec = findJoineryStatus(list, state.levelName, entry.roomName, entry.joineryCode);
-        var icon = rec ? joineryStatusIcon(rec.status) : "";
+        var icon = joineryDisplayIcon(rec);
         entry.refs.jobStatusBadge.textContent = icon;
         entry.refs.jobStatusBadge.style.display = icon ? "" : "none";
       });
@@ -2047,11 +2097,17 @@ body.plan-fullscreen .plan-viewport{
 
   /* ============================== joinery item list ============================== */
   var itemListEl = document.getElementById("itemListEl");
+  // Andrew, 2026-09-23: "if there is anything marked as NO on an ITP, it
+  // doesnt get marked off as finished." bothSigned tracks the raw
+  // signature fact; signed is the real "finished" state everything else
+  // (the item list's own chip, syncJoineryStatusFromChecklist's own
+  // auto-advance gate) reads -- both signed AND no row flagged "No".
   function checklistProgress(data){
-    var answered = 0;
+    var answered = 0, hasNo = checklistHasNoAnswer(data);
     data.rows.forEach(function(r){ if (r.status) answered++; });
-    var signed = !!(data.signoff.installer.sig && data.signoff.supervisor.sig);
-    return { answered: answered, total: data.rows.length, signed: signed };
+    var bothSigned = !!(data.signoff.installer.sig && data.signoff.supervisor.sig);
+    var signed = bothSigned && !hasNo;
+    return { answered: answered, total: data.rows.length, signed: signed, bothSigned: bothSigned, hasNo: hasNo };
   }
   // A cloud-sync client (Dropbox desktop/mobile, or an Android storage
   // provider backing a synced folder) renames rather than overwrites a file
@@ -2092,6 +2148,7 @@ body.plan-fullscreen .plan-viewport{
         if (data){
           var prog = checklistProgress(data);
           if (prog.signed) { sub = "Signed off"; chipClass = "done"; chipText = "Signed off"; }
+          else if (prog.bothSigned && prog.hasNo) { sub = "Signed — flagged item(s), not finished"; chipClass = "warn"; chipText = "Flagged"; }
           else if (prog.answered > 0) sub = prog.answered + " of " + prog.total + " checked";
         }
         if (isArtifact){
@@ -2216,6 +2273,7 @@ body.plan-fullscreen .plan-viewport{
     if (data){
       var prog = checklistProgress(data);
       if (prog.signed) { sub = "Signed off" + (item.description ? " · " + item.description : ""); chipClass = "done"; chipText = "Signed off"; }
+      else if (prog.bothSigned && prog.hasNo) { sub = "Signed — flagged, not finished" + (item.description ? " · " + item.description : ""); chipClass = "warn"; chipText = "Flagged"; }
       else if (prog.answered > 0) sub = (prog.answered + " of " + prog.total + " checked") + (item.description ? " · " + item.description : "");
     }
     row.innerHTML =
@@ -2265,6 +2323,13 @@ body.plan-fullscreen .plan-viewport{
         installer: { name: "", date: "", sig: null },
         supervisor: { name: "", date: "", sig: null }
       },
+      // Photos (2026-09-23) -- {dataUrl, w, h, addedAt}[], each already
+      // downscaled/compressed at capture time (see readAndCompressImageFile)
+      // so this stays a small, fast JSON file even with several photos
+      // attached -- the same lesson Site Measure's own v36 tablet-crash
+      // mitigation learned the hard way about embedding full-res images in
+      // a frequently-rewritten JSON file.
+      photos: [],
       updatedAt: new Date().toISOString(),
       // Shared device identity (added v7, UTZLINE Data Standard v1 §6) --
       // distinct from signoff.installer/supervisor.name above, which stay
@@ -2462,6 +2527,82 @@ body.plan-fullscreen .plan-viewport{
     markDirty();
   });
 
+  /* ---- Photos (2026-09-23) ----
+     Andrew: "add an 'Add Photo' button to the ITPS, This will attach them
+     at the very end of each specific ITP (scaled down to fit multiple on
+     an a3 page)." Reuses the plain OS file/camera chooser already used for
+     the company logo upload (accept="image/*" capture="environment") --
+     mobile browsers show a camera-or-gallery picker from this without
+     needing a custom modal. Every photo is downscaled/compressed to a
+     JPEG data URL at capture time (max 1600px on the long edge, quality
+     .82) before it's ever stored -- see blankChecklist's own comment on
+     why that matters for a JSON file that autosaves this often. */
+  function readAndCompressImageFile(file){
+    return new Promise(function(resolve, reject){
+      var img = new Image();
+      var url = URL.createObjectURL(file);
+      img.onload = function(){
+        URL.revokeObjectURL(url);
+        var maxDim = 1600;
+        var scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+        var w = Math.max(1, Math.round(img.naturalWidth * scale));
+        var h = Math.max(1, Math.round(img.naturalHeight * scale));
+        var canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        var ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        var dataUrl;
+        try{ dataUrl = canvas.toDataURL("image/jpeg", 0.82); }catch(e){ reject(e); return; }
+        resolve({ dataUrl: dataUrl, w: w, h: h });
+      };
+      img.onerror = function(){ URL.revokeObjectURL(url); reject(new Error("Couldn't read that image.")); };
+      img.src = url;
+    });
+  }
+  var addPhotoBtn = document.getElementById("addPhotoBtn");
+  var photoFileInput = document.getElementById("photoFileInput");
+  var photoGalleryEl = document.getElementById("photoGalleryEl");
+  function renderPhotoGallery(data){
+    photoGalleryEl.innerHTML = "";
+    (data.photos || []).forEach(function(photo, idx){
+      var cell = document.createElement("div");
+      cell.className = "photo-thumb";
+      var img = document.createElement("img");
+      img.src = photo.dataUrl;
+      img.alt = "Photo " + (idx + 1);
+      cell.appendChild(img);
+      var rm = document.createElement("button");
+      rm.type = "button"; rm.className = "photo-thumb-remove"; rm.title = "Remove this photo";
+      rm.textContent = "×";
+      rm.addEventListener("click", function(){
+        data.photos.splice(idx, 1);
+        renderPhotoGallery(data);
+        markDirty();
+      });
+      cell.appendChild(rm);
+      photoGalleryEl.appendChild(cell);
+    });
+  }
+  addPhotoBtn.addEventListener("click", function(){ photoFileInput.click(); });
+  photoFileInput.addEventListener("change", function(){
+    var files = Array.prototype.slice.call(photoFileInput.files || []);
+    photoFileInput.value = "";
+    if (!files.length || !state.currentData) return;
+    Promise.all(files.map(function(f){ return readAndCompressImageFile(f).catch(function(){ return null; }); })).then(function(results){
+      var added = 0;
+      results.forEach(function(r){
+        if (!r) return;
+        state.currentData.photos.push({ dataUrl: r.dataUrl, w: r.w, h: r.h, addedAt: new Date().toISOString() });
+        added++;
+      });
+      if (added){
+        renderPhotoGallery(state.currentData);
+        markDirty();
+      }
+      if (added < files.length) showToast("Some photos couldn't be added — try again.");
+    });
+  });
+
   function markDirty(){
     dirty = true;
     clearTimeout(saveTimer);
@@ -2502,6 +2643,7 @@ body.plan-fullscreen .plan-viewport{
       refs.commentInput.value = r.comment || "";
     });
     notesEl.value = data.notes || "";
+    renderPhotoGallery(data);
     ["installer", "supervisor"].forEach(function(role){
       var ref = signaturePads[role];
       ref.nameInput.value = data.signoff[role].name || "";
@@ -2526,6 +2668,9 @@ body.plan-fullscreen .plan-viewport{
       if (!data || !Array.isArray(data.rows) || data.rows.length !== CHECK_ITEMS.length){
         data = blankChecklist(joineryNo);
       }
+      // A checklist saved before 2026-09-22 has no photos array at all --
+      // purely additive, reads exactly like "no photos yet".
+      if (!Array.isArray(data.photos)) data.photos = [];
       state.currentData = data;
       state.currentJoineryNo = data.joineryNo || joineryNo;
       updateCrumbs();
@@ -2826,25 +2971,63 @@ body.plan-fullscreen .plan-viewport{
     doc.setFont("helvetica", "normal").setFontSize(7).setTextColor(140);
     doc.text("Generated by UTZLINE ITP — " + new Date().toLocaleString(), margin, pageH - 16);
 
+    // ---- photos, appended at the very end (2026-09-23, Andrew: "This will
+    // attach them at the very end of each specific ITP (scaled down to fit
+    // multiple on an a3 page)") -- one or more extra A3 landscape pages
+    // (bigger than the rest of this A4 document, specifically so more than
+    // one or two photos don't each need a whole page) with the photos laid
+    // out in a grid, each scaled to fit its own cell while keeping its
+    // aspect ratio. Runs BEFORE stampLogosOnEveryPage below so these pages
+    // get the same top-of-page logos as every other page.
+    if (data.photos && data.photos.length){
+      var PHOTO_COLS = 3, PHOTO_ROWS = 2, perPhotoPage = PHOTO_COLS * PHOTO_ROWS;
+      for (var photoStart = 0; photoStart < data.photos.length; photoStart += perPhotoPage){
+        doc.addPage("a3", "landscape");
+        var a3W = doc.internal.pageSize.getWidth(), a3H = doc.internal.pageSize.getHeight();
+        var gridTop = topContentY;
+        doc.setFont("helvetica", "bold").setFontSize(12).setTextColor(20);
+        doc.text("PHOTOS", margin, gridTop - 10);
+        var gridW = a3W - margin * 2, gridH = a3H - gridTop - margin;
+        var cellW = gridW / PHOTO_COLS, cellH = gridH / PHOTO_ROWS, cellPad = 10;
+        data.photos.slice(photoStart, photoStart + perPhotoPage).forEach(function(photo, idx){
+          var col = idx % PHOTO_COLS, prow = Math.floor(idx / PHOTO_COLS);
+          var cx = margin + col * cellW + cellPad, cy = gridTop + prow * cellH + cellPad;
+          var cw = cellW - cellPad * 2, ch = cellH - cellPad * 2;
+          var pw = photo.w || 1, ph = photo.h || 1;
+          var scale = Math.min(cw / pw, ch / ph);
+          var iw = pw * scale, ih = ph * scale;
+          var ix = cx + (cw - iw) / 2, iy = cy + (ch - ih) / 2;
+          try{
+            doc.addImage(photo.dataUrl, "JPEG", ix, iy, iw, ih, undefined, "FAST");
+            doc.setDrawColor(190).setLineWidth(0.75).rect(ix, iy, iw, ih);
+          }catch(e){ console.error("Photo failed to draw in PDF:", e); }
+        });
+      }
+    }
+
     // ---- both logos, top of EVERY page -- company logo top-left, UTZLINE
     // ITP's own brand mark top-right (Andrew, 2026-09-19). Total page count
     // isn't known until everything above has been laid out, so this is a
     // post-processing pass over every page already created, stamped after
     // all content -- doc.setPage() just changes which page subsequent
     // drawing calls target, it doesn't lose anything already drawn on the
-    // pages visited along the way.
+    // pages visited along the way. Reads EACH page's own width for the
+    // right-aligned UTZLINE mark (added 2026-09-23, when photo pages first
+    // introduced a page size other than the initial A4 -- the left-aligned
+    // company logo needed no such fix, margin/margin is size-independent).
     (function stampLogosOnEveryPage(){
       var totalPages = doc.internal.getNumberOfPages();
       var originalPage = doc.internal.getCurrentPageInfo().pageNumber;
       for (var p = 1; p <= totalPages; p++){
         doc.setPage(p);
+        var thisPageW = doc.internal.pageSize.getWidth();
         if (companyLogoW > 0 && companyLogoH > 0){
           try{
             doc.addImage(state.companyLogoDataUrl, "PNG", margin, margin, companyLogoW, companyLogoH, undefined, "FAST");
           }catch(e){ console.error("Company logo failed to draw in PDF:", e); }
         }
         try{
-          doc.addImage(UTZLINE_ITP_LOGO_DATA_URL, "PNG", pageW - margin - utzLogoSize, margin, utzLogoSize, utzLogoSize, undefined, "FAST");
+          doc.addImage(UTZLINE_ITP_LOGO_DATA_URL, "PNG", thisPageW - margin - utzLogoSize, margin, utzLogoSize, utzLogoSize, undefined, "FAST");
         }catch(e){ console.error("UTZLINE ITP logo failed to draw in PDF:", e); }
       }
       doc.setPage(originalPage);

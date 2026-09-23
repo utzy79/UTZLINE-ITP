@@ -161,7 +161,7 @@
 // openItem is byte-for-byte the same shape. This app's own existing smoke
 // tests and the full cross-app regression suite re-run clean afterward.
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v10";
+var CACHE_NAME = "utzline-itp-cache-v11";
 
 var PRECACHE_URLS = [
   "./",
