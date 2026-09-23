@@ -373,6 +373,14 @@ body.plan-fullscreen .plan-viewport{
   box-shadow:var(--shadow); padding:18px 20px; max-width:340px; width:calc(100% - 40px);
 }
 .modal-box p{ margin:0 0 14px; font-size:13.5px; line-height:1.45; }
+/* ---- "View job note" list rows (2026-09-22) ---- */
+.jobnote-row{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:9px 11px; border-radius:8px; border:1px solid var(--border-strong);
+  background:var(--surface-2); font-size:12.5px;
+}
+.jobnote-row-name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.jobnote-empty{ font-size:13px; color:var(--text-secondary); padding:2px 2px 8px; margin:0; }
 .modal-box input[type="text"]{
   display:block; width:100%; box-sizing:border-box; font:inherit; font-size:13.5px;
   padding:8px 10px; margin-bottom:16px; border-radius:6px; border:1px solid var(--border-strong);
@@ -536,6 +544,7 @@ body.plan-fullscreen .plan-viewport{
     <div class="actions-row">
       <button class="mbtn mbtn-accent" id="saveChecklistBtn">Save</button>
       <button class="mbtn" id="exportPdfBtn">Export PDF</button>
+      <button class="mbtn" id="viewJobNoteBtn">View job note</button>
       <button class="mbtn mbtn-danger" id="deleteItemBtn">Delete this item</button>
     </div>
   </div>
@@ -576,6 +585,19 @@ body.plan-fullscreen .plan-viewport{
       <button class="mbtn" id="leaveConfirmCancel">Cancel</button>
       <button class="mbtn mbtn-danger" id="leaveConfirmDiscard">Leave without saving</button>
       <button class="mbtn mbtn-accent" id="leaveConfirmSave">Save &amp; leave</button>
+    </div>
+  </div>
+</div>
+
+<!-- "View job note" (2026-09-22) -- read-only here, see listJobNotes' own
+     comment. A PDF attached to this exact item from Site Measure or the
+     Viewer. -->
+<div class="modal-backdrop" id="jobNoteViewBackdrop" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="jobNoteViewTitle">
+    <p id="jobNoteViewTitle" style="font-weight:700; margin-bottom:10px;">Job notes</p>
+    <div id="jobNoteListEl" style="display:flex; flex-direction:column; gap:6px; max-height:280px; overflow-y:auto; margin-bottom:14px;"></div>
+    <div class="modal-actions">
+      <button class="mbtn" id="jobNoteViewCancel">Close</button>
     </div>
   </div>
 </div>
@@ -809,6 +831,146 @@ body.plan-fullscreen .plan-viewport{
     }).then(function(text){
       try{ var arr = JSON.parse(text); return Array.isArray(arr) ? arr : []; }catch(e){ return []; }
     }, function(){ return []; }); // no file yet -- not an error
+  }
+
+  /* ---- joinery-status.json (2026-09-22) ----
+     Andrew: "we also need on the right click menu, a mark as check measured
+     button, this also changes the red dot to the following: site measured
+     📏 / (manufacture itp signed off) 📦 / installed (install itp signed
+     off) 🏆". A single project-wide, project-ROOT file (a sibling of
+     joinery-items.json, deliberately NOT nested under the flat-only
+     "Project Saves/" tree, so the exact same file/format works unchanged in
+     a legacy folder-based project too) -- read and written by Site Measure,
+     the Viewer, Install ITP, and Manufacture ITP alike; the format is
+     mirrored byte-for-byte across all four (see readJoineryItems' own
+     comment on why there's no shared module to import from instead).
+     One record per joinery item that has EVER reached "measured" or
+     beyond -- an item with no record at all is simply unset (today's plain
+     dot, no icon). Identity is the same (level, room, joineryId) path key
+     used everywhere else in this ecosystem (see readJoineryItems' own
+     comment) -- there's still no stable per-item ID anywhere.
+     Status only ever moves FORWARD (measured -> manufactured -> installed),
+     never back -- see joineryStatusRank/setJoineryStatusForward below.
+     This app only ever writes "installed" here (on Install ITP sign-off);
+     it reads the whole file to render the icon on its own Level Plan
+     screen regardless of who set it. */
+  function joineryStatusRank(status){
+    return status === "installed" ? 3 : status === "manufactured" ? 2 : status === "measured" ? 1 : 0;
+  }
+  function joineryStatusIcon(status){
+    return status === "installed" ? "🏆" : status === "manufactured" ? "📦" : status === "measured" ? "📏" : "";
+  }
+  function readJoineryStatuses(projectHandle){
+    if (!projectHandle) return Promise.resolve([]);
+    return projectHandle.getFileHandle("joinery-status.json", { create: false }).then(function(fh){
+      return fh.getFile();
+    }).then(function(file){
+      return file.text();
+    }).then(function(text){
+      try{ var arr = JSON.parse(text); return Array.isArray(arr) ? arr : []; }catch(e){ return []; }
+    }, function(){ return []; }); // no file yet -- not an error, every item just reads as unset
+  }
+  function findJoineryStatus(list, level, room, joineryId){
+    for (var i = 0; i < list.length; i++){
+      var rec = list[i];
+      if (rec && rec.level === level && (rec.room || "") === (room || "") && (rec.joineryId || "") === (joineryId || "")) return rec;
+    }
+    return null;
+  }
+  // Read-modify-write with the forward-only guard baked in -- resolves to
+  // whatever status ends up on record (which may be unchanged from before
+  // this call, if newStatus wasn't actually an advance). Every caller in
+  // every app funnels through this one function rather than writing the
+  // file directly, so the forward-only rule can never accidentally be
+  // bypassed from just one call site.
+  function setJoineryStatusForward(projectHandle, level, room, joineryId, newStatus, updatedBy){
+    if (!projectHandle) return Promise.resolve(null);
+    return readJoineryStatuses(projectHandle).then(function(list){
+      var rec = findJoineryStatus(list, level, room, joineryId);
+      var curRank = rec ? joineryStatusRank(rec.status) : 0;
+      var newRank = joineryStatusRank(newStatus);
+      if (newRank <= curRank) return rec ? rec.status : null;
+      var stamp = new Date().toISOString();
+      if (rec){
+        rec.status = newStatus; rec.updatedAt = stamp; rec.updatedBy = updatedBy || "";
+      } else {
+        list.push({ level: level, room: room || "", joineryId: joineryId || "", status: newStatus, updatedAt: stamp, updatedBy: updatedBy || "" });
+      }
+      var payload = JSON.stringify(list);
+      return projectHandle.getFileHandle("joinery-status.json", { create: true }).then(function(fh){
+        return fh.createWritable();
+      }).then(function(w){
+        return w.write(payload).then(function(){ return w.close(); });
+      }).then(function(){ return newStatus; });
+    });
+  }
+  // Called both right after a checklist autosaves/Saves (a fresh sign-off,
+  // just now completed) AND right after one is simply opened (a checklist
+  // that was ALREADY fully signed off before this status pipeline ever
+  // existed -- opening it is the only "event" a pre-existing sign-off ever
+  // gets, so this is also what backfills joinery-status.json for every
+  // checklist signed off before 2026-09-22, the first time each one is
+  // next opened). No-ops instantly, without even reading the status file,
+  // when the checklist isn't (yet) fully signed.
+  function syncJoineryStatusFromChecklist(data, level, room, joineryId){
+    if (!data || !checklistProgress(data).signed) return Promise.resolve(null);
+    return setJoineryStatusForward(state.projectHandle, level, room, joineryId, "installed", "Install ITP").catch(function(err){
+      console.error("Syncing joinery status failed:", err);
+      return null;
+    });
+  }
+
+  /* ---- Job notes -- read-only here (2026-09-22) ----
+     Andrew: "allow a job note to be added to a joinery item... also add a
+     view job note on right click button." "Add" only ever happens from
+     Site Measure or the Viewer (see source.html's own addJobNote comment
+     for the full storage design and the reasoning for keeping the WRITE
+     side out of both ITP apps); this app only ever reads the same files,
+     from a "View job note" button on the checklist screen itself, right
+     where an installer is already looking at this exact item -- simpler
+     and more discoverable here than inventing a whole new right-click/
+     long-press menu on top of this app's own Level Plan screen, which
+     today has no menu concept at all (a tap there just opens the item).
+     Key: joineryItemPageKey(level, room, joineryId), mirroring source.html
+     exactly -- EXCEPT source.html's own resolveJoineryItemPageKey, which
+     additionally disambiguates two markers that happen to share the same
+     (level, room, joineryId) on the same plan by sorting their on-plan
+     positions. That disambiguation needs the full marker list from the
+     level's own plan, which isn't naturally in hand from here (this screen
+     is reached from a plain items list, not always from tapping a marker)
+     -- so a genuine (level, room, joineryId) collision could show this
+     item's notes against the wrong one of the two colliding markers. Rare
+     (Andrew would see two markers sharing one code on the very same room),
+     and already a disclosed limitation of the same underlying (level,
+     room, joineryId)-as-identity design elsewhere in this ecosystem (see
+     resolveJoineryItemPageKey's own comment in source.html) -- not a new
+     one introduced here. */
+  function joineryItemPageKey(levelName, roomName, joineryCode){
+    return sanitizeFileBase(levelName) + " - " + sanitizeFileBase(roomName) + (joineryCode ? " - " + sanitizeFileBase(joineryCode) : "");
+  }
+  function getJobNotesDirForItem(projectHandle, key){
+    return projectHandle.getDirectoryHandle("Project Saves", { create: false }).then(function(psH){
+      return psH.getDirectoryHandle("Job Notes", { create: false });
+    }).then(function(jnH){
+      return jnH.getDirectoryHandle(key, { create: false });
+    });
+  }
+  function listJobNotes(projectHandle, key){
+    return getJobNotesDirForItem(projectHandle, key).then(function(dirH){
+      var out = [];
+      var iter = dirH.values();
+      function step(){
+        return iter.next().then(function(res){
+          if (res.done) return out;
+          if (res.value && res.value.kind === "file" && /\.pdf$/i.test(res.value.name)) out.push({ fileName: res.value.name, handle: res.value });
+          return step();
+        });
+      }
+      return step();
+    }, function(){ return []; }).then(function(list){
+      list.sort(function(a, b){ return b.fileName.localeCompare(a.fileName); });
+      return list;
+    });
   }
   // Where this app's own checklist/PDF files live for a FLAT project,
   // matching Andrew's own approved Release 3 folder diagram -- one shared
@@ -1545,6 +1707,15 @@ body.plan-fullscreen .plan-viewport{
   var PLAN_MARKER_INCOMPLETE_COLOR = "#c8391c";
   var PLAN_MARKER_PENDING_COLOR = "#8b9490";
 
+  // Andrew (2026-09-22): the on-plan label only needs to show the joinery
+  // code now, not "Room · Code" -- see Site Measure/Viewer's own
+  // (source.html) roomlinkDisplayText for the full reasoning; mirrored here
+  // so this app's own Level Plan screen matches. Computed at render time,
+  // never rewrites the marker's own saved obj.label.text.
+  function roomlinkDisplayText(obj){
+    return obj.joineryCode || obj.roomName || "";
+  }
+
   function buildPlanMarkerEl(obj){
     var ns = "http://www.w3.org/2000/svg";
     var g = document.createElementNS(ns, "g");
@@ -1575,9 +1746,29 @@ body.plan-fullscreen .plan-viewport{
     glyph.textContent = "…"; // ellipsis placeholder while status loads
     g.appendChild(glyph);
 
+    // Job-status badge (📏/📦/🏆, from the shared joinery-status.json --
+    // see setJoineryStatusForward's own comment) -- a small emoji sitting
+    // at the marker's own top-right, entirely separate from the statusCircle/
+    // glyph pair above (which is THIS app's own checklist-complete ✓/✕
+    // indicator, unrelated to the cross-app measured/manufactured/installed
+    // pipeline). Empty/hidden until renderLevelPlanScreen resolves a real
+    // status for this item.
+    var jobStatusBadge = document.createElementNS(ns, "text");
+    jobStatusBadge.setAttribute("class", "marker-jobstatus-badge");
+    jobStatusBadge.setAttribute("x", obj.x + r * 0.78);
+    jobStatusBadge.setAttribute("y", obj.y - r * 0.78);
+    jobStatusBadge.setAttribute("dy", "0.35em");
+    jobStatusBadge.setAttribute("text-anchor", "middle");
+    jobStatusBadge.setAttribute("font-size", Math.round(r * 1.15));
+    jobStatusBadge.setAttribute("paint-order", "stroke");
+    jobStatusBadge.setAttribute("stroke", "#fff");
+    jobStatusBadge.setAttribute("stroke-width", "3");
+    jobStatusBadge.style.display = "none";
+    g.appendChild(jobStatusBadge);
+
     var labelX = (obj.label && typeof obj.label.x === "number") ? obj.label.x : obj.x;
     var labelY = (obj.label && typeof obj.label.y === "number") ? obj.label.y : (obj.y + r + 22);
-    var labelText = (obj.label && obj.label.text) ? obj.label.text : obj.roomName;
+    var labelText = roomlinkDisplayText(obj);
     var labelFontSize = (obj.label && obj.label.fontSize) ? obj.label.fontSize : 22;
     var label = document.createElementNS(ns, "text");
     label.setAttribute("x", labelX); label.setAttribute("y", labelY);
@@ -1592,7 +1783,7 @@ body.plan-fullscreen .plan-viewport{
     label.textContent = labelText;
     g.appendChild(label);
 
-    return { g: g, statusCircle: statusCircle, glyph: glyph };
+    return { g: g, statusCircle: statusCircle, glyph: glyph, jobStatusBadge: jobStatusBadge };
   }
 
   function renderLevelPlanScreen(plan){
@@ -1637,6 +1828,17 @@ body.plan-fullscreen .plan-viewport{
           (status.complete ? PLAN_MARKER_COMPLETE_COLOR : PLAN_MARKER_INCOMPLETE_COLOR);
         entry.refs.statusCircle.setAttribute("fill", color);
         entry.refs.glyph.textContent = status.complete ? "✓" : "✕";
+      });
+    });
+    // One read of the whole shared status file for the level, rather than
+    // one per marker -- readJoineryStatuses' own file never gets big enough
+    // for that to matter, but there's no reason to ask for it twice.
+    readJoineryStatuses(state.projectHandle).then(function(list){
+      markerRefs.forEach(function(entry){
+        var rec = findJoineryStatus(list, state.levelName, entry.roomName, entry.joineryCode);
+        var icon = rec ? joineryStatusIcon(rec.status) : "";
+        entry.refs.jobStatusBadge.textContent = icon;
+        entry.refs.jobStatusBadge.style.display = icon ? "" : "none";
       });
     });
     return Promise.resolve();
@@ -2270,7 +2472,14 @@ body.plan-fullscreen .plan-viewport{
     if (!dirty || !state.currentData || !state.currentFileHandle) return Promise.resolve();
     dirty = false;
     var fileName = state.currentFileHandle.name;
-    return writeChecklistFile(fileName, state.currentData).catch(function(err){
+    var savedData = state.currentData, savedRoom = state.roomName, savedLevel = state.levelName, savedJoinery = state.currentJoineryNo;
+    return writeChecklistFile(fileName, savedData).then(function(){
+      // Fire-and-forget: a sign-off completing just now is exactly the
+      // moment this app can auto-advance the shared status (see
+      // syncJoineryStatusFromChecklist's own comment) -- never blocks the
+      // save itself finishing on this extra write.
+      syncJoineryStatusFromChecklist(savedData, savedLevel, savedRoom, savedJoinery);
+    }).catch(function(err){
       console.error("Autosave failed:", err);
     });
   }
@@ -2326,6 +2535,10 @@ body.plan-fullscreen .plan-viewport{
       // them has to happen only once the screen is actually laid out.
       showScreen("Checklist");
       renderChecklistIntoScreen(data);
+      // Backfill for a checklist signed off before 2026-09-22 (see
+      // syncJoineryStatusFromChecklist's own comment) -- harmless, instant
+      // no-op for every other checklist (unsigned, or already synced).
+      syncJoineryStatusFromChecklist(data, state.levelName, state.roomName, state.currentJoineryNo);
     }).catch(function(err){
       console.error("Open joinery item failed:", err);
       showToast("Couldn't open that item — try again.");
@@ -2350,6 +2563,51 @@ body.plan-fullscreen .plan-viewport{
         console.error("Delete joinery item failed:", err);
         showToast("Couldn't delete that item — try again.");
       });
+    });
+  });
+
+  /* ---- View job note (2026-09-22) -- see listJobNotes' own comment ---- */
+  var jobNoteViewBackdrop = document.getElementById("jobNoteViewBackdrop");
+  var jobNoteListEl = document.getElementById("jobNoteListEl");
+  function closeViewJobNoteDialog(){ jobNoteViewBackdrop.hidden = true; }
+  document.getElementById("jobNoteViewCancel").addEventListener("click", closeViewJobNoteDialog);
+  jobNoteViewBackdrop.addEventListener("click", function(e){ if (e.target === jobNoteViewBackdrop) closeViewJobNoteDialog(); });
+  document.getElementById("viewJobNoteBtn").addEventListener("click", function(){
+    jobNoteListEl.innerHTML = "<p class=\"jobnote-empty\">Loading…</p>";
+    jobNoteViewBackdrop.hidden = false;
+    var key = joineryItemPageKey(state.levelName, state.roomName, state.currentJoineryNo);
+    listJobNotes(state.projectHandle, key).then(function(notes){
+      jobNoteListEl.innerHTML = "";
+      if (!notes.length){
+        jobNoteListEl.innerHTML = "<p class=\"jobnote-empty\">No job notes yet for this item.</p>";
+        return;
+      }
+      notes.forEach(function(note){
+        var row = document.createElement("div");
+        row.className = "jobnote-row";
+        var nameSpan = document.createElement("span");
+        nameSpan.className = "jobnote-row-name";
+        nameSpan.textContent = note.fileName;
+        row.appendChild(nameSpan);
+        var openBtn = document.createElement("button");
+        openBtn.type = "button"; openBtn.className = "mbtn";
+        openBtn.textContent = "Open";
+        openBtn.addEventListener("click", function(){
+          note.handle.getFile().then(function(file){
+            var url = URL.createObjectURL(file);
+            window.open(url, "_blank");
+            setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+          }).catch(function(err){
+            console.error("Open job note failed:", err);
+            showToast("Couldn't open that file — try again.");
+          });
+        });
+        row.appendChild(openBtn);
+        jobNoteListEl.appendChild(row);
+      });
+    }).catch(function(err){
+      console.error("List job notes failed:", err);
+      jobNoteListEl.innerHTML = "<p class=\"jobnote-empty\">Couldn't load job notes — try again.</p>";
     });
   });
 

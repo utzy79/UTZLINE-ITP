@@ -135,8 +135,33 @@
 // under the old "itp" folder into "itp-install" the first time that room
 // is opened post-rename (never deleting the old copy). A LEGACY
 // (folder-based) project's behaviour is otherwise completely unchanged.
+// v10, 2026-09-23: this app's checklist sign-off now auto-advances the
+// shared joinery-status.json record (project root, a sibling of
+// joinery-items.json, works in both flat and legacy projects) forward to
+// "installed" the moment both signoff.builder and signoff.supervisor are
+// filled in -- on every autosave/explicit save (flushPendingSave), and
+// retroactively the next time an already-signed checklist from before this
+// existed is opened (openItem), so nothing has to be re-signed to pick up
+// the new status. Status is forward-only (never demoted back down to
+// "measured"/"manufactured" by anything). The shared status badge (📏 site
+// measured / 📦 manufactured / 🏆 installed) now renders on this app's own
+// Level Plan markers too, alongside its existing ✓/✕ checklist-complete
+// indicator (a separate, unrelated signal, unchanged). Also adds a "View
+// job note" button to the checklist screen, listing whatever PDFs Site
+// Measure or the Viewer have attached to this joinery item under its own
+// "Project Saves/Job Notes/<key>/" folder (read-only here; this app never
+// writes a job note itself). Per Andrew: "we also need on the right click
+// menu, a mark as check measured button, this also changes the red dot...
+// installed (install itp signed off)". The shared forward-only status
+// pipeline itself is covered end to end by
+// run_joinery_status_and_job_notes.js and, with a real UI-driven sign-off
+// (actual drawn signatures, not simulated), by
+// run_manufacture_itp_status_signoff.js against this app's sibling,
+// Manufacture ITP -- both apps' auto-status wiring into flushPendingSave/
+// openItem is byte-for-byte the same shape. This app's own existing smoke
+// tests and the full cross-app regression suite re-run clean afterward.
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v9";
+var CACHE_NAME = "utzline-itp-cache-v10";
 
 var PRECACHE_URLS = [
   "./",

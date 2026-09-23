@@ -1,6 +1,8 @@
 # UTZLINE ITP — installable app
 
-**Current version: v9** (its own independent version line, separate from Site Measure/Viewer's — bump this line every time a new build ships.)
+**Current version: v10** (its own independent version line, separate from Site Measure/Viewer's — bump this line every time a new build ships.)
+
+**v10 (2026-09-23):** checklist sign-off now auto-advances the shared `joinery-status.json` record (project root, works in both flat and legacy projects) to "installed" the moment both signoff fields are filled in, forward-only, with backfill for a checklist signed off before this existed. The shared status badge (📏/📦/🏆) now renders on this app's own Level Plan markers too, alongside the existing per-item ✓/✕ indicator. Also adds a read-only "View job note" button to the checklist screen, listing PDFs Site Measure/Viewer have attached to that joinery item.
 
 **v9 (2026-09-22):** flat-project support -- a project created by UTZLINE Projects v9+ (no real Level/Room folders; Project Saves/Floor Plans/ + joinery-items.json instead) now works here too. Levels/Rooms are read from those files, the joinery-item list is built from joinery-items.json ("+ New Joinery Item" is hidden -- only UTZLINE Projects creates items), and this app's flat-project checklist/PDF data lives in `Project Saves/UTZLINE ITP/Install ITP/` and `PDF Files/UTZLINE ITP/Install ITP/`. A LEGACY (folder-based) project's behaviour is unchanged. Bundled into this same release: this app's own project-wide data folder is renamed from `itp` to `itp-install` (disambiguating it from Manufacture ITP's `itp-manufacture`), with an automatic, additive, lossless migration from the old folder name the first time each room is opened.
 
