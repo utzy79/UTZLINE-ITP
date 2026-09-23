@@ -1097,11 +1097,25 @@ body.plan-fullscreen .plan-viewport{
   // yet). The internal string "manufactured" is unchanged; only its
   // display LABEL in UTZLINE Projects' Joinery Register changed ("Ready to
   // dispatch") -- this app still only ever writes "installed" here.
+  // EXPANDED AGAIN 2026-09-23 (Andrew, same day): "manufactured" was really
+  // two separate stages that got collapsed into one. Andrew: "Manufacture
+  // status needs to be split up into 2 parts. We need a machined and a
+  // manufactured tab. All traceable by user name. Machined to have its own
+  // app. Called machine schedule. This is where the machinist can mark off
+  // a joinery item as complete. It will add their name and date time to the
+  // system." New stage "machined" slots in between "in_manufacture" and
+  // "manufactured" -- set by the brand-new sibling app "UTZLINE Machine
+  // Schedule" when the machinist marks an item complete there, mirroring
+  // this same forward-only status pipeline. manufactured/delivered/
+  // installed all shift up one rank to make room; this app still only ever
+  // writes "installed" here, but its rank/icon display for OTHER apps'
+  // statuses needs to stay correct.
   function joineryStatusRank(status){
     switch (status){
-      case "installed": return 5;
-      case "delivered": return 4;
-      case "manufactured": return 3;
+      case "installed": return 6;
+      case "delivered": return 5;
+      case "manufactured": return 4;
+      case "machined": return 3;
       case "in_manufacture": return 2;
       case "measured": return 1;
       default: return 0;
@@ -1112,19 +1126,22 @@ body.plan-fullscreen .plan-viewport{
       case "installed": return "🏆";
       case "delivered": return "🚚";
       case "manufactured": return "📦";
+      case "machined": return "⚙️";
       case "in_manufacture": return "🏭";
       case "measured": return "📏";
       default: return "";
     }
   }
   // Mirrors source.html's own joineryDisplayIcon exactly -- see its comment
-  // for the priority ordering (installed/delivered/ready-to-dispatch/in-
-  // manufacture beat a job note, which beats a bare "measured").
+  // for the priority ordering (installed/delivered/ready-to-dispatch/
+  // machined/in-manufacture beat a job note, which beats a bare
+  // "measured").
   function joineryDisplayIcon(rec){
     if (!rec) return "";
     if (rec.status === "installed") return "🏆";
     if (rec.status === "delivered") return "🚚";
     if (rec.status === "manufactured") return "📦";
+    if (rec.status === "machined") return "⚙️";
     if (rec.status === "in_manufacture") return "🏭";
     if (rec.jobNote) return "🛠️";
     if (rec.status === "measured") return "📏";

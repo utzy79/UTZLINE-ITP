@@ -234,8 +234,24 @@
 // (deviceUserName at add-time, not export-time) alongside its existing
 // `addedAt`. A photo added before this release has no addedBy on file and
 // simply shows its date/time alone, never a blank or "undefined" name.)
+//
+// (v19 / cache v19, 2026-09-23: Andrew, verbatim: "Manufacture status needs
+// to be split up into 2 parts. We need a machined and a manufactured tab.
+// All traceable by user name. Machined to have its own app. Called machine
+// schedule. This is where the machinist can mark off a joinery item as
+// complete. It will add their name and date time to the system." This app
+// now recognises a new "machined" joinery status (rank 3, between
+// "in_manufacture" and "manufactured") set by the brand-new sibling app
+// UTZLINE Machine Schedule, whenever a machinist marks an item complete
+// there (their own signed-in name + timestamp, via the same shared
+// deviceUserName identity this app already uses). This app never sets
+// "machined" itself -- read-only here, same as it already was for
+// "manufactured"/"in_manufacture"/"delivered" -- but its own
+// joineryStatusRank/joineryStatusIcon/joineryDisplayIcon needed the new
+// case, and manufactured/delivered/installed all shift up one rank (4/5/6,
+// was 3/4/5) to make room for it. No other behaviour change.)
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v18";
+var CACHE_NAME = "utzline-itp-cache-v19";
 
 var PRECACHE_URLS = [
   "./",
