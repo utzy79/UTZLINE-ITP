@@ -1556,7 +1556,7 @@ body.plan-fullscreen .plan-viewport{
         // project mid-migration (some rooms already copied to
         // itp-install, others not yet touched) never briefly shows it as
         // an openable level either.
-        return names.filter(function(n){ return n !== "itp" && n !== "itp-install" && n !== "itp-manufacture"; });
+        return names.filter(function(n){ return n !== "itp" && n !== "itp-install" && n !== "itp-manufacture" && n !== "itp-delivery"; });
       });
     return namesPromise.then(function(names){
       levelListEl.innerHTML = "";

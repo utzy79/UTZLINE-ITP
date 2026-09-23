@@ -173,7 +173,7 @@
 // this field existed), so UTZLINE Projects' Register can show a full
 // status-change history on hover.
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v12";
+var CACHE_NAME = "utzline-itp-cache-v13";
 
 var PRECACHE_URLS = [
   "./",
