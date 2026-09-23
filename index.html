@@ -312,6 +312,27 @@ textarea.notes-box{
   cursor:pointer; display:flex; align-items:center; justify-content:center;
 }
 
+/* ---- rework tracker (2026-09-23) ---- */
+.rework-form{
+  border:1px solid var(--border-strong); border-radius:10px; padding:12px;
+  margin-bottom:16px; background:var(--surface-1);
+}
+.rework-card{
+  border:1px solid var(--border-strong); border-radius:10px; padding:12px;
+  margin-bottom:10px; background:var(--surface-1);
+}
+.rework-card-head{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin-bottom:6px; flex-wrap:wrap; }
+.rework-cabinet{ font-weight:700; }
+.rework-date{ font-size:12px; color:var(--text-secondary); }
+.rework-text{ margin:0 0 10px; white-space:pre-wrap; font-size:13px; }
+.rework-received-row{ display:flex; align-items:center; gap:8px; margin:10px 0; font-size:13px; flex-wrap:wrap; }
+.rework-received-row input[type="checkbox"]{ width:16px; height:16px; flex:none; }
+.rework-received-row input[type="date"]{
+  margin-left:auto; font:inherit; font-size:13px; padding:6px 8px; border-radius:6px;
+  border:1px solid var(--border-strong); background:var(--surface-0); color:var(--text-primary);
+}
+.rework-empty{ color:var(--text-secondary); font-size:13px; }
+
 /* ---- sign-off ---- */
 .signoff-block{
   border:1px solid var(--border-strong); border-radius:9px; padding:12px;
@@ -653,6 +674,51 @@ body.plan-fullscreen .plan-viewport{
     </div>
   </div>
 
+  <!-- ---- Rework tracker (2026-09-23) ----
+       Andrew, verbatim: "the install itp is to aldo have a rework tracker.
+       You can now long press on a joinery item and have 2 buttons. 1 is
+       open itp. The other is open rework. This is where we can take photos
+       and provide text information for rework joinery parts including
+       cabinet number. This will also have a received tick box with date
+       selector. Multiple reworks can be added per joinery item and fully
+       trackable via this system and via utzline projects summary pages per
+       project." Reached only via the new long-press (or right-click, on
+       desktop) marker menu -- see markerMenuBackdrop's own comment -- never
+       from the checklist screen itself, matching Andrew's literal spec.
+       Storage mirrors the checklist's own convention (see
+       ensureReworkFolder's comment): one JSON file per joinery item, named
+       exactly like that item's checklist file, holding an array of rework
+       entries (newest first) so multiple reworks per item are independently
+       tracked. Photos reuse the exact same downscale-to-JPEG-dataURL
+       pipeline as the checklist's own "Add photo" (readAndCompressImageFile). -->
+  <div class="screen" id="screenRework">
+    <button type="button" class="back-link" id="backFromReworkBtn">← All joinery items in this room</button>
+    <h2 id="reworkHeading"></h2>
+    <p class="hint">Track rework needed on this joinery item — photos, details, cabinet number, and whether the reworked part has come back on site. Add as many entries as needed.</p>
+
+    <h2 style="font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-secondary);">Add rework</h2>
+    <div class="rework-form">
+      <div class="so-field" style="max-width:220px;">
+        <label>Cabinet number</label>
+        <input type="text" id="reworkCabinetInput" autocomplete="off" placeholder="e.g. C14">
+      </div>
+      <label style="display:block; font-size:11px; color:var(--text-secondary); margin:10px 0 3px;">Details</label>
+      <textarea class="notes-box" id="reworkTextInput" placeholder="What needs rework..."></textarea>
+      <h3 style="font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-secondary); margin:14px 0 8px;">Photos</h3>
+      <div class="photo-gallery" id="reworkPhotoGalleryEl"></div>
+      <div class="actions-row">
+        <button class="mbtn" id="addReworkPhotoBtn">Add photo</button>
+        <input type="file" id="reworkPhotoFileInput" accept="image/*" multiple capture="environment" style="display:none;">
+      </div>
+      <div class="actions-row">
+        <button class="mbtn mbtn-accent" id="addReworkEntryBtn">Add rework entry</button>
+      </div>
+    </div>
+
+    <h2 style="font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-secondary); margin-top:22px;">Rework history</h2>
+    <div id="reworkListEl"></div>
+  </div>
+
 </main>
 
 <div id="toast"></div>
@@ -689,6 +755,29 @@ body.plan-fullscreen .plan-viewport{
       <button class="mbtn" id="leaveConfirmCancel">Cancel</button>
       <button class="mbtn mbtn-danger" id="leaveConfirmDiscard">Leave without saving</button>
       <button class="mbtn mbtn-accent" id="leaveConfirmSave">Save &amp; leave</button>
+    </div>
+  </div>
+</div>
+
+<!-- Long-press marker menu (2026-09-23, Andrew: "You can now long press on a
+     joinery item and have 2 buttons. 1 is open itp. The other is open
+     rework." This app's Level Plan screen previously had no menu concept at
+     all -- a plain tap jumped straight into the checklist (see
+     openItemFromMarker's own comment, written the day before this request
+     arrived, explicitly calling that out as a deliberate scope limit).
+     Long-press (550ms, same threshold/pattern as UTZLINE Scheduler's own
+     marker long-press) or a real right-click on desktop now shows this
+     small action sheet instead; a plain tap is completely unchanged and
+     still opens the checklist directly, so the existing one-tap workflow
+     never breaks for anyone not using rework tracking. See the pointerdown
+     handler's own comment for the gesture-detection detail. -->
+<div class="modal-backdrop" id="markerMenuBackdrop" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" style="max-width:300px; text-align:center;">
+    <p style="font-weight:700; margin-bottom:14px;" id="markerMenuTitle"></p>
+    <div class="modal-actions" style="flex-direction:column; gap:8px;">
+      <button class="mbtn mbtn-accent" id="markerMenuOpenItpBtn" style="width:100%;">Open ITP</button>
+      <button class="mbtn" id="markerMenuOpenReworkBtn" style="width:100%;">Open rework</button>
+      <button class="mbtn" id="markerMenuCancelBtn" style="width:100%;">Cancel</button>
     </div>
   </div>
 </div>
@@ -1384,7 +1473,7 @@ body.plan-fullscreen .plan-viewport{
 
   /* ============================== screen switching ============================== */
   var screens = {};
-  ["Setup","Reconnect","Projects","Levels","LevelPlan","Rooms","Items","Checklist"].forEach(function(n){
+  ["Setup","Reconnect","Projects","Levels","LevelPlan","Rooms","Items","Checklist","Rework"].forEach(function(n){
     screens[n] = document.getElementById("screen" + n);
   });
   function showScreen(name){
@@ -2561,15 +2650,49 @@ body.plan-fullscreen .plan-viewport{
     var mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
     planPinchStart = { dist: dist, mid: mid, view: { scale: planView.scale, tx: planView.tx, ty: planView.ty } };
   }
+  // Long-press-to-open-the-marker-menu (2026-09-23) -- touch equivalent of
+  // the "contextmenu" (real right-click) handler further down, same 550ms
+  // threshold and pattern as UTZLINE Scheduler's own marker long-press
+  // (that app's own onPlanRightClickOrLongPress). Cancelled the moment the
+  // pointer moves past the same 4px drag threshold pan already uses, or a
+  // second pointer joins (pinch), so it never fires mid-pan/pinch. A plain
+  // tap that releases before the timer fires is completely unaffected --
+  // planPointerEnd below only treats a release as a menu-worthy long-press
+  // when planLongPressFired is true, otherwise it's the original
+  // open-the-checklist-directly tap behaviour, unchanged since before this
+  // feature existed.
+  var LONG_PRESS_MS = 550;
+  var planLongPressTimer = null, planLongPressFired = false;
+  function clearPlanLongPressTimer(){
+    if (planLongPressTimer){ clearTimeout(planLongPressTimer); planLongPressTimer = null; }
+  }
   levelPlanSvg.addEventListener("pointerdown", function(e){
+    // A right-click (or middle-click) fires its own pointerdown/pointerup
+    // pair with a real mouse, same as a left-click -- without this guard
+    // that pair would ALSO run the tap-open-checklist logic below, firing
+    // right alongside (and racing) the "contextmenu" handler's own
+    // showMarkerMenu call below. Left-click and every touch/pen pointer
+    // (button === 0, or no real "mouse" button at all) are unaffected.
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     levelPlanSvg.setPointerCapture(e.pointerId);
     planPointers.set(e.pointerId, planPointFromEvent(e));
     if (planPointers.size === 1){
       var markerEl = e.target.closest(".plan-marker");
       planDragStart = { x: e.clientX, y: e.clientY, tx: planView.tx, ty: planView.ty, moved: false, markerEl: markerEl };
       planPinchStart = null;
+      planLongPressFired = false;
+      clearPlanLongPressTimer();
+      if (markerEl){
+        var lpRoom = markerEl.getAttribute("data-room"), lpCode = markerEl.getAttribute("data-code");
+        planLongPressTimer = setTimeout(function(){
+          if (planDragStart && planDragStart.moved) return;
+          planLongPressFired = true;
+          showMarkerMenu(lpRoom, lpCode);
+        }, LONG_PRESS_MS);
+      }
     } else if (planPointers.size === 2){
       planDragStart = null;
+      clearPlanLongPressTimer();
       planStartPinch();
     }
   });
@@ -2578,7 +2701,7 @@ body.plan-fullscreen .plan-viewport{
     planPointers.set(e.pointerId, planPointFromEvent(e));
     if (planPointers.size === 1 && planDragStart){
       var dx = e.clientX - planDragStart.x, dy = e.clientY - planDragStart.y;
-      if (Math.abs(dx) + Math.abs(dy) > 4) planDragStart.moved = true;
+      if (Math.abs(dx) + Math.abs(dy) > 4){ planDragStart.moved = true; clearPlanLongPressTimer(); }
       planView.tx = planDragStart.tx + dx;
       planView.ty = planDragStart.ty + dy;
       applyPlanView();
@@ -2598,7 +2721,8 @@ body.plan-fullscreen .plan-viewport{
     }
   });
   function planPointerEnd(e){
-    var tappedMarkerEl = (planPointers.size === 1 && planDragStart && !planDragStart.moved && planDragStart.markerEl)
+    clearPlanLongPressTimer();
+    var tappedMarkerEl = (planPointers.size === 1 && planDragStart && !planDragStart.moved && !planLongPressFired && planDragStart.markerEl)
       ? planDragStart.markerEl : null;
     var tapMarkerRoom = tappedMarkerEl ? tappedMarkerEl.getAttribute("data-room") : null;
     var tapMarkerCode = tappedMarkerEl ? tappedMarkerEl.getAttribute("data-code") : null;
@@ -2617,6 +2741,15 @@ body.plan-fullscreen .plan-viewport{
   }
   levelPlanSvg.addEventListener("pointerup", planPointerEnd);
   levelPlanSvg.addEventListener("pointercancel", planPointerEnd);
+  // Real right-click, for desktop -- same "long-press equivalent" pattern
+  // as UTZLINE Scheduler's own marker menu (its own contextmenu handler).
+  levelPlanSvg.addEventListener("contextmenu", function(e){
+    var markerEl = e.target.closest(".plan-marker");
+    if (!markerEl) return;
+    e.preventDefault();
+    clearPlanLongPressTimer();
+    showMarkerMenu(markerEl.getAttribute("data-room"), markerEl.getAttribute("data-code"));
+  });
   levelPlanSvg.addEventListener("wheel", function(e){
     if (!currentLevelPlan) return;
     e.preventDefault();
@@ -2751,6 +2884,58 @@ body.plan-fullscreen .plan-viewport{
     }).catch(function(err){
       console.error("Open joinery item from plan failed:", err);
       showToast("Couldn't open that joinery item — try again.");
+    });
+  }
+
+  /* ---- Long-press marker menu (2026-09-23) -- see markerMenuBackdrop's own
+     top-of-file comment for the full design note. A legacy marker with no
+     joinery code at all (pre-dates joinery codes) has nothing to open a
+     rework tracker FOR, so it falls back to the same room-list behaviour a
+     plain tap already uses for that case, same as openItemFromMarker's own
+     legacy fallback below it. */
+  var markerMenuBackdrop = document.getElementById("markerMenuBackdrop");
+  var markerMenuTitle = document.getElementById("markerMenuTitle");
+  var markerMenuTarget = null;
+  function showMarkerMenu(roomName, joineryCode){
+    if (!joineryCode){ openRoom(roomName); return; }
+    markerMenuTarget = { room: roomName, code: joineryCode };
+    markerMenuTitle.textContent = joineryCode;
+    markerMenuBackdrop.hidden = false;
+  }
+  function hideMarkerMenu(){ markerMenuBackdrop.hidden = true; markerMenuTarget = null; }
+  document.getElementById("markerMenuCancelBtn").addEventListener("click", hideMarkerMenu);
+  markerMenuBackdrop.addEventListener("click", function(e){ if (e.target === markerMenuBackdrop) hideMarkerMenu(); });
+  document.getElementById("markerMenuOpenItpBtn").addEventListener("click", function(){
+    var t = markerMenuTarget;
+    hideMarkerMenu();
+    if (t) openItemFromMarker(t.room, t.code);
+  });
+  document.getElementById("markerMenuOpenReworkBtn").addEventListener("click", function(){
+    var t = markerMenuTarget;
+    hideMarkerMenu();
+    if (t) openReworkFromMarker(t.room, t.code);
+  });
+
+  // Same room/state setup as openItemFromMarker, but lands on the new
+  // Rework screen for this item instead of its checklist -- see
+  // ensureReworkFolder's own comment for where the rework file itself
+  // lives, in either project shape.
+  function openReworkFromMarker(roomName, joineryCode){
+    state.roomName = roomName;
+    state.currentJoineryNo = "";
+    updateCrumbs();
+    var roomHandlePromise = state.projectIsFlat ? Promise.resolve(null) : state.levelHandle.getDirectoryHandle(roomName);
+    return roomHandlePromise.then(function(dirH){
+      state.roomHandle = dirH;
+      return ensureItpRoomFolder();
+    }).then(function(handles){
+      state.itpRoomHandle = handles.checklistsHandle;
+      state.itpPdfHandle = handles.pdfHandle;
+      document.getElementById("itemsHeading").textContent = "“" + roomName + "” — joinery items";
+      return openRework(joineryCode);
+    }).catch(function(err){
+      console.error("Open rework tracker from plan failed:", err);
+      showToast("Couldn't open rework tracking for that item — try again.");
     });
   }
 
@@ -3011,6 +3196,254 @@ body.plan-fullscreen .plan-viewport{
     });
   }
 
+  /* ============================== rework tracker (2026-09-23) ==============================
+     One JSON file per joinery item -- same identity key as that item's own
+     checklist file (itpChecklistFileNameFor), just in a sibling folder --
+     holding an array of independently-trackable rework entries so multiple
+     reworks per item are supported, per Andrew's own spec. Kept completely
+     separate from the checklist's own JSON (rather than adding a
+     "reworks" array onto that file) so UTZLINE Projects, and any future
+     app, can read rework history without needing to understand or touch
+     the checklist's own 16-row/signoff/photos shape at all -- the same
+     "narrow, purpose-built file" reasoning as Delivery ITP's own
+     deliveryLocationPin living on its OWN checklist rather than a shared
+     one.
+       FLAT project:   Project Saves/UTZLINE ITP/Install ITP Rework/<Level> - <Room> - <Code>.json
+       LEGACY project: itp-install-rework/<Level>/<Room>/<Code>.json
+     No PDF export for rework (not asked for, and there's no paper-template
+     precedent to match the way the checklist has one) -- just in-app
+     tracking here plus a read-only summary in UTZLINE Projects. */
+  function getReworkDirFlat(projectHandle, create){
+    return projectHandle.getDirectoryHandle("Project Saves", { create: !!create }).then(function(psH){
+      return psH.getDirectoryHandle("UTZLINE ITP", { create: !!create });
+    }).then(function(branchH){
+      return branchH.getDirectoryHandle("Install ITP Rework", { create: !!create });
+    });
+  }
+  function ensureReworkRoomFolderLegacy(levelName, roomName){
+    return state.projectHandle.getDirectoryHandle("itp-install-rework", { create: true }).then(function(h){
+      return h.getDirectoryHandle(levelName, { create: true });
+    }).then(function(levelH){
+      return levelH.getDirectoryHandle(roomName, { create: true });
+    });
+  }
+  function ensureReworkFolder(){
+    return state.projectIsFlat
+      ? getReworkDirFlat(state.projectHandle, true)
+      : ensureReworkRoomFolderLegacy(state.levelName, state.roomName);
+  }
+  function reworkFileNameFor(joineryCode){
+    return itpChecklistFileNameFor(state.levelName, state.roomName, joineryCode, state.projectIsFlat);
+  }
+  function blankReworkFile(joineryCode){
+    return { schemaVersion: 1, joineryNo: joineryCode, reworks: [] };
+  }
+  var reworkState = { dirHandle: null, joineryCode: "", data: null };
+  function writeReworkFile(){
+    if (!reworkState.dirHandle || !reworkState.data) return Promise.resolve();
+    reworkState.data.updatedAt = new Date().toISOString();
+    var payload = JSON.stringify(reworkState.data);
+    return reworkState.dirHandle.getFileHandle(reworkFileNameFor(reworkState.joineryCode), { create: true }).then(function(fh){
+      return fh.createWritable();
+    }).then(function(w){
+      return w.write(payload).then(function(){ return w.close(); });
+    }).catch(function(err){
+      console.error("Save rework entry failed:", err);
+      showToast("Couldn't save that rework change — try again.");
+    });
+  }
+  function openRework(joineryCode){
+    state.currentJoineryNo = joineryCode;
+    updateCrumbs();
+    return ensureReworkFolder().then(function(dirH){
+      reworkState.dirHandle = dirH;
+      return dirH.getFileHandle(reworkFileNameFor(joineryCode), { create: true });
+    }).then(function(fh){ return fh.getFile(); }).then(function(file){ return file.text(); }).then(function(text){
+      var data = null;
+      try{ data = JSON.parse(text); }catch(e){ data = null; }
+      if (!data || !Array.isArray(data.reworks)) data = blankReworkFile(joineryCode);
+      reworkState.joineryCode = joineryCode;
+      reworkState.data = data;
+      document.getElementById("reworkHeading").textContent = "Rework — " + joineryCode;
+      resetReworkForm();
+      renderReworkList();
+      showScreen("Rework");
+    });
+  }
+  document.getElementById("backFromReworkBtn").addEventListener("click", function(){
+    populateItemList().then(function(){ showScreen("Items"); });
+  });
+
+  /* ---- rework "add entry" form -- photos reuse readAndCompressImageFile,
+     the exact same downscale-to-JPEG pipeline the checklist's own "Add
+     photo" button already uses (defined further below; function
+     declarations are hoisted, so the forward reference here is fine). ---- */
+  var reworkFormPhotos = [];
+  var reworkCabinetInput = document.getElementById("reworkCabinetInput");
+  var reworkTextInput = document.getElementById("reworkTextInput");
+  var reworkPhotoGalleryEl = document.getElementById("reworkPhotoGalleryEl");
+  function resetReworkForm(){
+    reworkFormPhotos = [];
+    reworkCabinetInput.value = "";
+    reworkTextInput.value = "";
+    renderReworkFormPhotoGallery();
+  }
+  function renderReworkFormPhotoGallery(){
+    reworkPhotoGalleryEl.innerHTML = "";
+    reworkFormPhotos.forEach(function(photo, idx){
+      var cell = document.createElement("div");
+      cell.className = "photo-thumb";
+      var img = document.createElement("img");
+      img.src = photo.dataUrl; img.alt = "Photo " + (idx + 1);
+      cell.appendChild(img);
+      var rm = document.createElement("button");
+      rm.type = "button"; rm.className = "photo-thumb-remove"; rm.title = "Remove this photo"; rm.textContent = "×";
+      rm.addEventListener("click", function(){ reworkFormPhotos.splice(idx, 1); renderReworkFormPhotoGallery(); });
+      cell.appendChild(rm);
+      reworkPhotoGalleryEl.appendChild(cell);
+    });
+  }
+  document.getElementById("addReworkPhotoBtn").addEventListener("click", function(){
+    document.getElementById("reworkPhotoFileInput").click();
+  });
+  document.getElementById("reworkPhotoFileInput").addEventListener("change", function(e){
+    var input = e.target;
+    var files = Array.prototype.slice.call(input.files || []);
+    input.value = "";
+    if (!files.length) return;
+    Promise.all(files.map(function(f){ return readAndCompressImageFile(f).catch(function(){ return null; }); })).then(function(results){
+      var added = 0;
+      results.forEach(function(r){
+        if (!r) return;
+        reworkFormPhotos.push({ dataUrl: r.dataUrl, w: r.w, h: r.h, addedAt: new Date().toISOString(), addedBy: deviceUserName || "" });
+        added++;
+      });
+      if (added) renderReworkFormPhotoGallery();
+      if (added < files.length) showToast("Some photos couldn't be added — try again.");
+    });
+  });
+  document.getElementById("addReworkEntryBtn").addEventListener("click", function(){
+    if (!reworkState.data) return;
+    var text = reworkTextInput.value.trim();
+    var cabinet = reworkCabinetInput.value.trim();
+    if (!text && !cabinet && !reworkFormPhotos.length){
+      showToast("Add some detail before saving a rework entry.");
+      return;
+    }
+    var entry = {
+      id: "rw_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+      cabinetNumber: cabinet,
+      text: text,
+      photos: reworkFormPhotos,
+      received: false,
+      receivedDate: null,
+      createdAt: new Date().toISOString(),
+      createdBy: deviceUserName || ""
+    };
+    reworkState.data.reworks.unshift(entry); // newest first, same convention as the status-history popup elsewhere in this family
+    resetReworkForm();
+    renderReworkList();
+    writeReworkFile().then(function(){ showToast("Rework entry added."); });
+  });
+
+  /* ---- rework history list ---- */
+  var reworkListEl = document.getElementById("reworkListEl");
+  function formatReworkDate(iso){
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }
+  function renderReworkList(){
+    reworkListEl.innerHTML = "";
+    var reworks = (reworkState.data && reworkState.data.reworks) || [];
+    if (!reworks.length){
+      reworkListEl.innerHTML = '<p class="rework-empty">No rework logged yet for this item.</p>';
+      return;
+    }
+    reworks.forEach(function(entry){
+      var card = document.createElement("div");
+      card.className = "rework-card";
+
+      var head = document.createElement("div");
+      head.className = "rework-card-head";
+      var cab = document.createElement("span");
+      cab.className = "rework-cabinet";
+      cab.textContent = entry.cabinetNumber ? ("Cabinet " + entry.cabinetNumber) : "No cabinet number";
+      var date = document.createElement("span");
+      date.className = "rework-date";
+      date.textContent = formatReworkDate(entry.createdAt) + (entry.createdBy ? " — " + entry.createdBy : "");
+      head.appendChild(cab); head.appendChild(date);
+      card.appendChild(head);
+
+      if (entry.text){
+        var p = document.createElement("p");
+        p.className = "rework-text";
+        p.textContent = entry.text;
+        card.appendChild(p);
+      }
+
+      if (entry.photos && entry.photos.length){
+        var gal = document.createElement("div");
+        gal.className = "photo-gallery";
+        entry.photos.forEach(function(photo, idx){
+          var cell = document.createElement("div");
+          cell.className = "photo-thumb";
+          var img = document.createElement("img");
+          img.src = photo.dataUrl; img.alt = "Rework photo " + (idx + 1);
+          cell.appendChild(img);
+          gal.appendChild(cell);
+        });
+        card.appendChild(gal);
+      }
+
+      var recRow = document.createElement("label");
+      recRow.className = "rework-received-row";
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.className = "rework-received-cb";
+      cb.checked = !!entry.received;
+      var span = document.createElement("span");
+      span.textContent = "Received back on site";
+      var dateInput = document.createElement("input");
+      dateInput.type = "date";
+      dateInput.value = entry.receivedDate || "";
+      dateInput.disabled = !entry.received;
+      cb.addEventListener("change", function(){
+        entry.received = cb.checked;
+        if (entry.received && !entry.receivedDate){
+          entry.receivedDate = new Date().toISOString().slice(0, 10);
+          dateInput.value = entry.receivedDate;
+        }
+        dateInput.disabled = !entry.received;
+        writeReworkFile();
+      });
+      dateInput.addEventListener("change", function(){
+        entry.receivedDate = dateInput.value || null;
+        writeReworkFile();
+      });
+      recRow.appendChild(cb); recRow.appendChild(span); recRow.appendChild(dateInput);
+      card.appendChild(recRow);
+
+      var actions = document.createElement("div");
+      actions.className = "actions-row";
+      var delBtn = document.createElement("button");
+      delBtn.type = "button"; delBtn.className = "mbtn mbtn-danger"; delBtn.textContent = "Delete this entry";
+      delBtn.addEventListener("click", function(){
+        genericConfirm("Delete this rework entry? This can't be undone.").then(function(ok){
+          if (!ok) return;
+          var idx = reworkState.data.reworks.indexOf(entry);
+          if (idx !== -1) reworkState.data.reworks.splice(idx, 1);
+          renderReworkList();
+          writeReworkFile();
+        });
+      });
+      actions.appendChild(delBtn);
+      card.appendChild(actions);
+
+      reworkListEl.appendChild(card);
+    });
+  }
+
   /* ============================== signature pad ============================== */
   function setupSignaturePad(canvas, hintEl){
     var ctx = canvas.getContext("2d");
@@ -3251,7 +3684,7 @@ body.plan-fullscreen .plan-viewport{
       var added = 0;
       results.forEach(function(r){
         if (!r) return;
-        state.currentData.photos.push({ dataUrl: r.dataUrl, w: r.w, h: r.h, addedAt: new Date().toISOString() });
+        state.currentData.photos.push({ dataUrl: r.dataUrl, w: r.w, h: r.h, addedAt: new Date().toISOString(), addedBy: deviceUserName || "" });
         added++;
       });
       if (added){
@@ -3418,6 +3851,23 @@ body.plan-fullscreen .plan-viewport{
   /* ============================== PDF export ============================== */
   function wrapText(doc, text, maxWidth){
     return doc.splitTextToSize(text || "", maxWidth);
+  }
+  // "All to be date and time stamped with users name also" (Andrew,
+  // 2026-09-23, on the photo/pin-drop/snapshot pages) -- one shared caption
+  // formatter for every stamped image in a PDF export: date+time from an
+  // ISO string, plus " — <name>" when an attribution name is available.
+  // Either half can be missing (an older photo saved before addedBy existed
+  // has no name; a malformed/missing date is dropped rather than shown as
+  // "Invalid Date") without the other collapsing.
+  function formatPdfImageStamp(iso, by){
+    var stamp = "";
+    var d = iso ? new Date(iso) : null;
+    if (d && !isNaN(d.getTime())){
+      stamp = d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) +
+        ", " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    }
+    if (by) stamp = stamp ? (stamp + " — " + by) : by;
+    return stamp;
   }
   function exportChecklistPdf(){
     if (!window.jspdf || !window.jspdf.jsPDF){
@@ -3632,26 +4082,35 @@ body.plan-fullscreen .plan-viewport{
 
     // ---- photos, appended at the very end (2026-09-23, Andrew: "This will
     // attach them at the very end of each specific ITP (scaled down to fit
-    // multiple on an a3 page)") -- one or more extra A3 landscape pages
-    // (bigger than the rest of this A4 document, specifically so more than
-    // one or two photos don't each need a whole page) with the photos laid
-    // out in a grid, each scaled to fit its own cell while keeping its
-    // aspect ratio. Runs BEFORE stampLogosOnEveryPage below so these pages
-    // get the same top-of-page logos as every other page.
+    // multiple on an a3 page)") -- originally one or more extra A3 landscape
+    // pages; changed to A4 PORTRAIT the same day per Andrew's follow-up,
+    // verbatim: "when the photos, pin drops, snapshots are added to the itp
+    // pages, change it from a3 to a4 portrait. All collated nicely per page.
+    // All to be date and time stamped with users name also." Now matches
+    // this document's own page size/orientation throughout (previously only
+    // the trailing photo pages were the odd one out). 2 columns x 3 rows
+    // keeps the same 6-per-page count the old A3 landscape 3x2 grid had,
+    // reflowed for the narrower portrait shape, with room reserved under
+    // each photo for its date/time + name caption (formatPdfImageStamp,
+    // above) -- an older photo saved before addedBy existed shows just the
+    // date/time, never a blank or "undefined" name. Runs BEFORE
+    // stampLogosOnEveryPage below so these pages get the same top-of-page
+    // logos as every other page.
     if (data.photos && data.photos.length){
-      var PHOTO_COLS = 3, PHOTO_ROWS = 2, perPhotoPage = PHOTO_COLS * PHOTO_ROWS;
+      var PHOTO_COLS = 2, PHOTO_ROWS = 3, perPhotoPage = PHOTO_COLS * PHOTO_ROWS;
+      var PHOTO_CAPTION_H = 13;
       for (var photoStart = 0; photoStart < data.photos.length; photoStart += perPhotoPage){
-        doc.addPage("a3", "landscape");
-        var a3W = doc.internal.pageSize.getWidth(), a3H = doc.internal.pageSize.getHeight();
+        doc.addPage("a4", "portrait");
+        var gridPageW = doc.internal.pageSize.getWidth(), gridPageH = doc.internal.pageSize.getHeight();
         var gridTop = topContentY;
         doc.setFont("helvetica", "bold").setFontSize(12).setTextColor(20);
         doc.text("PHOTOS", margin, gridTop - 10);
-        var gridW = a3W - margin * 2, gridH = a3H - gridTop - margin;
+        var gridW = gridPageW - margin * 2, gridH = gridPageH - gridTop - margin;
         var cellW = gridW / PHOTO_COLS, cellH = gridH / PHOTO_ROWS, cellPad = 10;
         data.photos.slice(photoStart, photoStart + perPhotoPage).forEach(function(photo, idx){
           var col = idx % PHOTO_COLS, prow = Math.floor(idx / PHOTO_COLS);
           var cx = margin + col * cellW + cellPad, cy = gridTop + prow * cellH + cellPad;
-          var cw = cellW - cellPad * 2, ch = cellH - cellPad * 2;
+          var cw = cellW - cellPad * 2, ch = cellH - cellPad * 2 - PHOTO_CAPTION_H;
           var pw = photo.w || 1, ph = photo.h || 1;
           var scale = Math.min(cw / pw, ch / ph);
           var iw = pw * scale, ih = ph * scale;
@@ -3660,6 +4119,12 @@ body.plan-fullscreen .plan-viewport{
             doc.addImage(photo.dataUrl, "JPEG", ix, iy, iw, ih, undefined, "FAST");
             doc.setDrawColor(190).setLineWidth(0.75).rect(ix, iy, iw, ih);
           }catch(e){ console.error("Photo failed to draw in PDF:", e); }
+          var stampText = formatPdfImageStamp(photo.addedAt, photo.addedBy);
+          if (stampText){
+            doc.setFont("helvetica", "normal").setFontSize(7.5).setTextColor(110);
+            doc.text(stampText, cx + cw / 2, cy + ch + PHOTO_CAPTION_H - 2, { align: "center" });
+            doc.setTextColor(20);
+          }
         });
       }
     }

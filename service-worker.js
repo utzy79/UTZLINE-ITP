@@ -197,8 +197,45 @@
 // what triggers the write on this screen. Covered end to end by the new
 // run_itp_identity_pin.js; this app's other existing smoke tests re-run
 // clean afterward.
+//
+// (v17, 2026-09-23: Andrew, verbatim: "the install itp is to aldo have a
+// rework tracker. You can now long press on a joinery item and have 2
+// buttons. 1 is open itp. The other is open rework. This is where we can
+// take photos and provide text information for rework joinery parts
+// including cabinet number. This will also have a received tick box with
+// date selector. Multiple reworks can be added per joinery item and fully
+// trackable via this system and via utzline projects summary pages per
+// project." The Level Plan screen previously had no long-press/menu
+// concept at all -- a plain tap jumped straight into the checklist (a
+// deliberate scope limit called out in the Job Notes design comment the
+// day before this request). Long-press (550ms) or a real right-click on
+// desktop now opens a small "Open ITP" / "Open rework" action sheet
+// instead; a plain tap is completely unchanged. "Open rework" opens a new
+// Rework screen for that item: an "Add rework" form (cabinet number, free
+// text, photos -- reusing the checklist's own photo downscale pipeline)
+// plus a history list of every past entry, each independently showing a
+// "Received back on site" checkbox with its own date selector. Multiple
+// entries per item are supported. Stored in its own JSON file per item
+// (Project Saves/UTZLINE ITP/Install ITP Rework/ for a flat project,
+// itp-install-rework/<Level>/<Room>/ for a legacy one) -- deliberately
+// separate from the checklist's own JSON, so UTZLINE Projects (and any
+// future app) can read rework history without depending on the
+// checklist's own shape. No PDF export for rework -- in-app tracking here,
+// plus a read-only summary in UTZLINE Projects.)
+//
+// (v18 / cache v18, 2026-09-23: Andrew, verbatim, on the exported PDF's
+// photos/pin-drops/snapshots: "change it from a3 to a4 portrait. All
+// collated nicely per page. All to be date and time stamped with users
+// name also." The trailing photo-grid page(s) (previously A3 landscape,
+// 3x2) are now A4 portrait, 2x3, matching the rest of the document's own
+// page size for the first time -- each photo now shows a date/time +
+// uploader-name caption underneath it (formatPdfImageStamp), sourced from
+// a new `addedBy` field stamped onto a photo the moment it's added
+// (deviceUserName at add-time, not export-time) alongside its existing
+// `addedAt`. A photo added before this release has no addedBy on file and
+// simply shows its date/time alone, never a blank or "undefined" name.)
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v16";
+var CACHE_NAME = "utzline-itp-cache-v18";
 
 var PRECACHE_URLS = [
   "./",
