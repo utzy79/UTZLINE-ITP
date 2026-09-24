@@ -251,7 +251,7 @@
 // case, and manufactured/delivered/installed all shift up one rank (4/5/6,
 // was 3/4/5) to make room for it. No other behaviour change.)
 var ICON_VERSION = "v2";
-var CACHE_NAME = "utzline-itp-cache-v19";
+var CACHE_NAME = "utzline-itp-cache-v20";
 
 var PRECACHE_URLS = [
   "./",
