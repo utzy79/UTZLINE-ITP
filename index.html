@@ -607,7 +607,10 @@ body.plan-fullscreen .plan-viewport{
       </div>
     </div>
     <div class="list" id="projectListEl"></div>
-    <div class="actions-row"><button class="mbtn" id="switchRootBtn">Use a Different Projects Folder</button></div>
+    <div class="actions-row">
+      <button class="mbtn" id="refreshProjectsBtn">Refresh Projects</button>
+      <button class="mbtn" id="switchRootBtn">Use a Different Projects Folder</button>
+    </div>
   </div>
 
   <!-- ---- Level list ---- -->
@@ -935,7 +938,7 @@ body.plan-fullscreen .plan-viewport{
   </div>
 </div>
 
-<!-- Performance: jsPDF and the large PDF logo are loaded only when a PDF is needed. -->
+<!-- jsPDF is loaded only when PDF export is requested. -->
 <script>
 (function(){
   "use strict";
@@ -956,7 +959,6 @@ body.plan-fullscreen .plan-viewport{
   // resized down to 256px rather than reusing the original 96px crop --
   // plenty of headroom over the 48pt box this actually gets drawn into,
   // even at a heavy pinch-zoom on a phone.
-  // Loaded on demand from pdf-assets.js when PDF export is first requested.
   var UTZLINE_ITP_LOGO_DATA_URL = window.UTZLINE_ITP_LOGO_DATA_URL || null;
 
   var CHECK_ITEMS = [
@@ -2253,8 +2255,11 @@ body.plan-fullscreen .plan-viewport{
   /* ============================== folder picking / reconnect ============================== */
   var reconnectLabel = document.getElementById("reconnectLabel");
   function afterRootReady(){
-    populateIdentitySelector(); // needs state.rootHandle to read utzline-users.csv -- best-effort, never blocks
-    return populateProjectList().then(function(){ showScreen("Projects"); });
+    // Show the screen first. Android must not wait for a large folder scan.
+    showScreen("Projects");
+    // Identity reads a separate CSV. Delay it so it cannot compete with first paint.
+    setTimeout(function(){ populateIdentitySelector(); }, 800);
+    return populateProjectList();
   }
   function tryRestoreRoot(){
     return idbGet(PROJECTS_ROOT_KEY).then(function(handle){
@@ -2307,35 +2312,57 @@ body.plan-fullscreen .plan-viewport{
 
   /* ============================== project list ============================== */
   var projectListEl = document.getElementById("projectListEl");
-  function populateProjectList(){
-    return listSubdirNames(state.rootHandle).then(function(names){
-      projectListEl.innerHTML = "";
-      if (!names.length){
-        projectListEl.innerHTML = '<div class="empty-note">No projects found in this folder yet — create one in Site Measure first.</div>';
-        return;
-      }
-      // Kick off a readProjectMeta for every project so the list can show
-      // "No. — Name" where available without blocking the list appearing;
-      // each row updates itself once its own meta read resolves.
-      names.forEach(function(name){
-        var row = document.createElement("button");
-        row.type = "button";
-        row.className = "list-row";
-        row.innerHTML = '<div class="row-main"><div class="row-title"></div><div class="row-sub"></div></div>';
-        row.querySelector(".row-title").textContent = name;
-        row.addEventListener("click", function(){ openProject(name); });
-        projectListEl.appendChild(row);
-        state.rootHandle.getDirectoryHandle(name).then(readProjectMeta).then(function(meta){
-          if (meta && (meta.no || meta.name || meta.contractor)){
-            var bits = [];
-            if (meta.no) bits.push("No. " + meta.no);
-            if (meta.contractor) bits.push(meta.contractor);
-            row.querySelector(".row-sub").textContent = bits.join(" · ");
-          }
-        });
-      });
+  var PROJECT_LIST_CACHE_PREFIX = "utzline-itp-project-list-v2:";
+  function projectListCacheKey(){
+    return PROJECT_LIST_CACHE_PREFIX + (state.rootName || "Projects");
+  }
+  function renderProjectNames(names){
+    projectListEl.innerHTML = "";
+    if (!names || !names.length){
+      projectListEl.innerHTML = '<div class="empty-note">No projects found in this folder yet — create one in Site Measure first.</div>';
+      return;
+    }
+    names.forEach(function(name){
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "list-row";
+      row.innerHTML = '<div class="row-main"><div class="row-title"></div></div>';
+      row.querySelector(".row-title").textContent = name;
+      row.addEventListener("click", function(){ openProject(name); });
+      projectListEl.appendChild(row);
     });
   }
+  function refreshProjectList(){
+    if (!state.rootHandle) return Promise.resolve();
+    projectListEl.innerHTML = '<div class="empty-note">Refreshing projects…</div>';
+    var started = performance.now ? performance.now() : Date.now();
+    return listSubdirNames(state.rootHandle).then(function(names){
+      renderProjectNames(names);
+      return idbSet(projectListCacheKey(), names).catch(function(){}).then(function(){
+        var finished = performance.now ? performance.now() : Date.now();
+        console.info("UTZLINE project refresh: " + Math.round(finished - started) + " ms for " + names.length + " projects");
+      });
+    }).catch(function(err){
+      console.error("Project refresh failed:", err);
+      projectListEl.innerHTML = '<div class="empty-note">Could not read the Projects folder. Tap Refresh Projects to try again.</div>';
+    });
+  }
+  function populateProjectList(){
+    // Startup and back-navigation use one small IndexedDB value, not a full
+    // Android directory scan. A real scan now happens only on first use or
+    // when Refresh Projects is tapped.
+    projectListEl.innerHTML = '<div class="empty-note">Loading projects…</div>';
+    return idbGet(projectListCacheKey()).then(function(names){
+      if (Array.isArray(names)){
+        renderProjectNames(names);
+        return;
+      }
+      return refreshProjectList();
+    }).catch(function(){ return refreshProjectList(); });
+  }
+  document.getElementById("refreshProjectsBtn").addEventListener("click", function(){
+    refreshProjectList();
+  });
   function openProject(name){
     state.projectName = name;
     state.levelName = ""; state.roomName = ""; state.currentJoineryNo = "";
@@ -3819,17 +3846,15 @@ body.plan-fullscreen .plan-viewport{
   var pdfResourcesPromise = null;
   function loadScriptOnce(src){
     return new Promise(function(resolve, reject){
-      var existing = document.querySelector('script[data-lazy-src="' + src + '"]');
-      if (existing){
-        if (existing.getAttribute("data-loaded") === "1") { resolve(); return; }
-        existing.addEventListener("load", resolve, { once: true });
-        existing.addEventListener("error", reject, { once: true });
+      var script = document.querySelector('script[data-lazy-src="' + src + '"]');
+      if (script){
+        if (script.getAttribute("data-loaded") === "1") return resolve();
+        script.addEventListener("load", resolve, { once: true });
+        script.addEventListener("error", reject, { once: true });
         return;
       }
-      var script = document.createElement("script");
-      script.src = src;
-      script.async = true;
-      script.setAttribute("data-lazy-src", src);
+      script = document.createElement("script");
+      script.src = src; script.async = true; script.setAttribute("data-lazy-src", src);
       script.addEventListener("load", function(){ script.setAttribute("data-loaded", "1"); resolve(); }, { once: true });
       script.addEventListener("error", reject, { once: true });
       document.head.appendChild(script);
@@ -3847,10 +3872,7 @@ body.plan-fullscreen .plan-viewport{
       ]).then(function(){
         UTZLINE_ITP_LOGO_DATA_URL = window.UTZLINE_ITP_LOGO_DATA_URL;
         if (!window.jspdf || !window.jspdf.jsPDF || !UTZLINE_ITP_LOGO_DATA_URL) throw new Error("PDF resources unavailable");
-      }).catch(function(err){
-        pdfResourcesPromise = null;
-        throw err;
-      });
+      }).catch(function(err){ pdfResourcesPromise = null; throw err; });
     }
     return pdfResourcesPromise;
   }
@@ -5104,16 +5126,8 @@ body.plan-fullscreen .plan-viewport{
     document.body.innerHTML = '<main><div class="setup-card"><h2>Browser not supported</h2>' +
       '<p class="hint">UTZLINE Install ITP needs a browser with File System Access support (Chrome, Edge, or the installed Android/desktop app). Please open it there instead.</p></div></main>';
   } else {
-    if (window.performance && performance.mark) performance.mark("utzline-boot-start");
     loadCompanyLogo();
-    tryRestoreRoot().then(function(){
-      if (window.performance && performance.mark){
-        performance.mark("utzline-boot-ready");
-        performance.measure("utzline-boot", "utzline-boot-start", "utzline-boot-ready");
-        var entries = performance.getEntriesByName("utzline-boot");
-        if (entries.length) console.info("UTZLINE boot ready in " + Math.round(entries[entries.length - 1].duration) + " ms");
-      }
-    });
+    tryRestoreRoot();
     loadDeviceUserName(); // shared device identity (added v7) -- never blocks boot
   }
 
