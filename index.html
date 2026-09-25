@@ -1060,7 +1060,7 @@ body.plan-fullscreen .plan-viewport{
      because that folder may legitimately appear a moment later (another
      app in the family creating it). */
   var dirHandleCache = {};
-  function invalidateDirHandleCache(){ dirHandleCache = {}; }
+  function invalidateDirHandleCache(){ dirHandleCache = {}; migratedRoomsThisSession = {}; noOldItpFolderThisSession = false; }
   function dirCacheKey(segments){ return segments.join("\u0000"); }
   // Resolves `segments` (an array of folder names) below `baseHandle`,
   // memoizing every prefix. `baseKey` namespaces the cache per base handle
@@ -1698,11 +1698,14 @@ body.plan-fullscreen .plan-viewport{
   // copy still sitting under the pre-rename "itp"), and never touching or
   // deleting anything under the old name.
   function migrateOldItpRoomIfNeeded(levelName, roomName, newRoomH){
-    return state.projectHandle.getDirectoryHandle(itpLegacyFolderName(), { create: false }).then(function(oldItpH){
-      return oldItpH.getDirectoryHandle(levelName, { create: false });
-    }).then(function(oldLevelH){
-      return oldLevelH.getDirectoryHandle(roomName, { create: false });
-    }).then(function(oldRoomH){
+    // Cached walk (round 4): a project with no old "itp" folder at all -- the
+    // normal case now -- fails at the first step once and is not re-walked
+    // per room (see noOldItpFolderThisSession); one that does have it caches
+    // the folder and level handles, leaving one named lookup per room.
+    if (noOldItpFolderThisSession) return Promise.resolve();
+    return projectDir([itpLegacyFolderName()], false).then(function(){
+      return projectDir([itpLegacyFolderName(), levelName, roomName], false);
+    }, function(){ noOldItpFolderThisSession = true; throw new Error("no old itp folder"); }).then(function(oldRoomH){
       return listJsonFileNames(oldRoomH).then(function(oldNames){
         return oldNames.reduce(function(chain, name){
           return chain.then(function(){
@@ -1720,9 +1723,17 @@ body.plan-fullscreen .plan-viewport{
       });
     }, function(){ /* no old itp data for this room -- nothing to migrate */ });
   }
+  // The old-"itp"-folder migration check is one more named lookup per room
+  // open on Android (see the round-4 note near loadLevelPlanItpStatuses);
+  // once it has run for a room this session there's nothing new for it to
+  // find, so it runs once per room per project open.
+  var migratedRoomsThisSession = {};
+  var noOldItpFolderThisSession = false;
   function ensureItpRoomFolderLegacy(levelName, roomName){
     return projectDir([itpFolderName(), levelName, roomName], true).then(function(newRoomH){
-      return migrateOldItpRoomIfNeeded(levelName, roomName, newRoomH).then(function(){ return newRoomH; });
+      var k = levelName + "\u0000" + roomName;
+      if (migratedRoomsThisSession[k]) return newRoomH;
+      return migrateOldItpRoomIfNeeded(levelName, roomName, newRoomH).then(function(){ migratedRoomsThisSession[k] = true; return newRoomH; });
     });
   }
 
@@ -3063,6 +3074,37 @@ body.plan-fullscreen .plan-viewport{
     }
     return step();
   }
+  /* ---- Round 4 (2026-09-25) -- what Andrew's own Timings screenshot showed,
+     on the real tablet, on v28 (Mt Barker Hospital, a legacy project, 60
+     markers on the level):
+        435 ms   level -> plan on screen            (fine)
+      14519 ms   plan: marker ticks resolved (cancelled)
+      14802 ms   plan: status badges resolved (cancelled)
+       1539 ms   plan tap -> checklist on screen (0 photos)
+       1579 ms   save: checklist written (2 photos)
+        640 ms   back: list refreshed
+     The plan itself and the save are reasonable. The background status
+     passes were still taking ~15 s (and only stopped because he tapped),
+     and the tap's own 1.5 s for an EMPTY checklist says every individual
+     file-system call on that tablet is slow -- hundreds of ms, not the
+     few ms a desktop (or this code's test mock) sees. Two conclusions
+     that reshape both loaders below:
+       1. Fewer calls beats smaller calls. On an Android content-provider
+          folder, looking one entry up BY NAME (getFileHandle /
+          getDirectoryHandle) is not an indexed lookup -- the provider
+          scans the folder to find it -- so N named lookups into one big
+          folder cost far more than ONE listing of it plus matching the
+          names ourselves. Round 3 had moved the badges from one listing
+          to one named lookup per marker (60 of them, into a project-wide
+          folder) and made them slower on the device even though the
+          count of "operations" looked lower. Reversed here: one listing.
+       2. Don't list what the index already answers. Round 3 still listed
+          every room's checklist folder (two folders, old and new name)
+          on EVERY plan open, even when the index already had a live
+          entry for every marker in that room. Now a room is listed only
+          when it has at least one marker the index can't answer.
+     On a warm visit this brings the whole ✓/✕ pass down to one small
+     index read per room, and the badge pass to one folder listing. */
   function loadLevelPlanItpStatuses(markerRefs, gen){
     var levelName = state.levelName, isFlat = state.projectIsFlat;
     var legacyRoomMarkers = []; // pre-joinery-code markers -- room-wide status, unchanged logic
@@ -3074,31 +3116,62 @@ body.plan-fullscreen .plan-viewport{
     var roomNames = Object.keys(byRoom);
     var endTimer = perfStart("plan: marker ticks resolved");
     var readTasks = [];   // full reads for index misses that DO have a file
-    var probeTasks = [];  // flat only: "does this file exist?" for items the index has never seen
+    var stats = { rooms: roomNames.length, fromIndex: 0, listed: 0, read: 0 };
 
-    // Flat: one shared checklist folder for the whole project. Round 2
-    // listed it whole to learn which items exist -- on a big project
-    // that's hundreds of entries walked on every plan open, and the walk
-    // couldn't be interrupted. Round 3: the index answers "exists / not
-    // started" for anything seen before, and only items it has NEVER seen
-    // get one probe each (bounded by this level's markers, not the
-    // project), remembered afterwards either way.
-    var flatDirP = isFlat
-      ? getItpChecklistsDirFlat(state.projectHandle, false).then(function(h){ return h; }, function(){ return null; })
-      : Promise.resolve(null);
+    // Flat: one shared checklist folder for the whole project. Listed at
+    // most ONCE per pass, and only if some marker actually needs it (the
+    // index answers everything it has seen, "not started" included).
+    var flatDirH = null, flatNamesP = null;
+    function flatNames(){
+      if (!flatNamesP){
+        stats.listed++;
+        flatNamesP = getItpChecklistsDirFlat(state.projectHandle, false).then(function(h){
+          flatDirH = h;
+          return listEntriesCancellable(h, gen, function(e){ return e.kind === "file"; });
+        }).then(function(entries){
+          var set = {};
+          entries.forEach(function(e){ set[e.name] = e; }); // keep the handles: no named lookup needed to read
+          return set;
+        }, function(){ return {}; });
+      }
+      return flatNamesP;
+    }
 
-    return flatDirP.then(function(flatDir){
-      if (!planWorkIsCurrent(gen)) return;
-      var roomTasks = roomNames.map(function(roomName){
-        return function(){
+    var roomTasks = roomNames.map(function(roomName){
+      return function(){
+        return readItemIndexFor(levelName, roomName).then(function(index){
+          if (!planWorkIsCurrent(gen)) return;
+          var unresolved = [];
+          byRoom[roomName].forEach(function(entry){
+            var fileName = itpChecklistFileNameFor(levelName, roomName, entry.joineryCode, isFlat);
+            var cached = Object.prototype.hasOwnProperty.call(index, fileName) ? index[fileName] : null;
+            if (isLiveIndexEntry(cached)){
+              stats.fromIndex++;
+              applyMarkerItpStatus(entry, markerStatusFromIndexEntry(cached));
+            } else if (isFlat && cached && cached.missing){
+              stats.fromIndex++;
+              applyMarkerItpStatus(entry, { complete: false, total: 0 });
+            } else {
+              unresolved.push({ entry: entry, fileName: fileName });
+            }
+          });
+          if (!unresolved.length) return; // the whole room came from the index -- nothing listed, nothing read
+
+          // Something in this room the index has never seen: find out what
+          // exists with ONE listing (flat: the shared folder, once per
+          // pass; legacy: this room's own folder(s)), then read only the
+          // files that are there. Misses are remembered so next time the
+          // index answers them too.
           var existingP = isFlat
-            ? Promise.resolve(null)
-            : listItpRoomFilesLegacyMerged(levelName, roomName).then(function(merged){
-                return { set: nameSet(merged.names), resolve: merged.resolve };
-              }, function(){ return { set: {}, resolve: function(){ return null; } }; });
-          return Promise.all([readItemIndexFor(levelName, roomName), existingP]).then(function(res){
+            ? flatNames().then(function(set){
+                return { has: function(n){ return !!set[n]; }, handleFor: function(n){ return set[n] || null; } };
+              })
+            : (stats.listed++, listItpRoomFilesLegacyMerged(levelName, roomName).then(function(merged){
+                var set = nameSet(merged.names);
+                return { has: function(n){ return !!set[n]; }, dirFor: function(n){ return merged.resolve(n); } };
+              }, function(){ return { has: function(){ return false; }, dirFor: function(){ return null; } }; }));
+          return existingP.then(function(existing){
             if (!planWorkIsCurrent(gen)) return;
-            var index = res[0], existing = res[1];
             var backfill = {}, outstanding = 0;
             function settleOne(){
               outstanding--;
@@ -3106,78 +3179,67 @@ body.plan-fullscreen .plan-viewport{
                 return writeItemIndexEntriesFor(levelName, roomName, backfill);
               }
             }
-            function fullRead(entry, fileName, dirH){
+            unresolved.forEach(function(u){
+              if (!existing.has(u.fileName)){
+                applyMarkerItpStatus(u.entry, { complete: false, total: 0 }); // not started yet
+                if (isFlat) backfill[u.fileName] = itemIndexMissingEntry();
+                return;
+              }
               outstanding++;
               readTasks.push(function(){
-                if (!dirH) { applyMarkerItpStatus(entry, { complete: false, total: 0 }); return Promise.resolve(settleOne()); }
-                return dirH.getFileHandle(fileName, { create: false }).then(function(fh){ return fh.getFile(); })
+                stats.read++;
+                var fhP = isFlat
+                  ? Promise.resolve(existing.handleFor(u.fileName))
+                  : (function(){ var d = existing.dirFor(u.fileName); return d ? d.getFileHandle(u.fileName, { create: false }) : Promise.reject(new Error("no folder")); })();
+                return fhP.then(function(fh){ return fh.getFile(); })
                   .then(function(file){ return file.text(); })
                   .then(function(text){
                     var data = null;
                     try{ data = JSON.parse(text); }catch(e){ data = null; }
                     if (isIndexableChecklist(data)){
                       var fresh = itemIndexEntryFromData(data);
-                      applyMarkerItpStatus(entry, markerStatusFromIndexEntry(fresh));
-                      backfill[fileName] = fresh;
+                      applyMarkerItpStatus(u.entry, markerStatusFromIndexEntry(fresh));
+                      backfill[u.fileName] = fresh;
                     } else {
-                      applyMarkerItpStatus(entry, { complete: false, total: 1, started: false });
+                      applyMarkerItpStatus(u.entry, { complete: false, total: 1, started: false });
                     }
                   }, function(){
-                    applyMarkerItpStatus(entry, { complete: false, total: 0 });
-                    if (isFlat) backfill[fileName] = itemIndexMissingEntry();
+                    applyMarkerItpStatus(u.entry, { complete: false, total: 0 });
                   }).then(settleOne);
               });
-            }
-            byRoom[roomName].forEach(function(entry){
-              var fileName = itpChecklistFileNameFor(levelName, roomName, entry.joineryCode, isFlat);
-              var cached = Object.prototype.hasOwnProperty.call(index, fileName) ? index[fileName] : null;
-              if (isLiveIndexEntry(cached)){
-                applyMarkerItpStatus(entry, markerStatusFromIndexEntry(cached));
-                return;
-              }
-              if (isFlat){
-                if (cached && cached.missing){ applyMarkerItpStatus(entry, { complete: false, total: 0 }); return; }
-                // Never seen: the read itself doubles as the existence probe
-                // (a miss is remembered as "not started").
-                fullRead(entry, fileName, flatDir);
-                return;
-              }
-              if (!existing.set[fileName]){
-                applyMarkerItpStatus(entry, { complete: false, total: 0 }); // not started yet
-                return;
-              }
-              fullRead(entry, fileName, existing.resolve(fileName));
             });
+            // Nothing to read but misses to remember (flat): write them now.
+            if (outstanding === 0 && Object.keys(backfill).length) return writeItemIndexEntriesFor(levelName, roomName, backfill);
           });
-        };
-      });
-      var legacyTasks = legacyRoomMarkers.map(function(entry){
-        return function(){
-          return computeRoomItpStatus(entry.roomName).then(function(status){
-            if (planWorkIsCurrent(gen)) applyMarkerItpStatus(entry, status);
-          });
-        };
-      });
-      // Cheap index reads first (most markers resolve here), then the
-      // full reads for whatever the index couldn't answer, legacy
-      // room-wide markers last.
-      return runPlanTasksLimited(roomTasks, PLAN_STATUS_CONCURRENCY, gen).then(function(){
-        return runPlanTasksLimited(readTasks, PLAN_STATUS_CONCURRENCY, gen);
-      }).then(function(){
-        return runPlanTasksLimited(legacyTasks, PLAN_STATUS_CONCURRENCY, gen);
-      });
+        });
+      };
+    });
+    var legacyTasks = legacyRoomMarkers.map(function(entry){
+      return function(){
+        return computeRoomItpStatus(entry.roomName).then(function(status){
+          if (planWorkIsCurrent(gen)) applyMarkerItpStatus(entry, status);
+        });
+      };
+    });
+    // Cheap index reads first (most markers resolve here), then the full
+    // reads for whatever the index couldn't answer, legacy room-wide
+    // markers last.
+    return runPlanTasksLimited(roomTasks, PLAN_STATUS_CONCURRENCY, gen).then(function(){
+      return runPlanTasksLimited(readTasks, PLAN_STATUS_CONCURRENCY, gen);
     }).then(function(){
-      endTimer(planWorkIsCurrent(gen) ? (markerRefs.length + " markers") : "cancelled");
+      return runPlanTasksLimited(legacyTasks, PLAN_STATUS_CONCURRENCY, gen);
+    }).then(function(){
+      endTimer((planWorkIsCurrent(gen) ? "" : "cancelled, ") + markerRefs.length + " markers, " + stats.fromIndex + " from index, " + stats.listed + " folders listed, " + stats.read + " files read");
     }).catch(function(err){
       console.error("Loading plan marker statuses failed:", err);
     });
   }
   // Status badges (📏/📦/🚚/🏆 from the shared, event-sourced joinery
-  // status). Round 2 walked the whole Joinery Status folder (one subfolder
-  // per item project-wide) to find this level's items; round 3 probes each
-  // of this level's keys directly off the (cached) root handle instead --
-  // bounded by the level, interruptible between items, and each item's
-  // own small event folder is read one file at a time.
+  // status). ONE cancellable listing of the Joinery Status folder, matched
+  // against this level's keys -- see the round-4 note above for why one
+  // listing beats a named lookup per marker on Android. Only the matched
+  // items' own (small) event folders are then read, one file at a time,
+  // straight from the handles the listing returned.
   function loadLevelPlanJobStatusBadges(markerRefs, gen){
     var levelName = state.levelName, projectHandle = state.projectHandle;
     if (!projectHandle || !markerRefs.length) return Promise.resolve();
@@ -3187,13 +3249,27 @@ body.plan-fullscreen .plan-viewport{
       (byKey[key] = byKey[key] || []).push(entry);
     });
     var endTimer = perfStart("plan: status badges resolved");
+    function paint(key, icon){
+      byKey[key].forEach(function(entry){
+        entry.refs.jobStatusBadge.textContent = icon;
+        entry.refs.jobStatusBadge.style.display = icon ? "" : "none";
+        entry.liveBadge = true;
+        rememberMarkerSnapshot(entry, { badge: icon });
+      });
+    }
     return migrateLegacyJoineryStatusIfNeeded(projectHandle).then(function(){
       return getJoineryStatusEventsRootDir(projectHandle, false);
     }).then(function(rootH){
       if (!planWorkIsCurrent(gen)) return;
-      var tasks = Object.keys(byKey).map(function(key){
-        return function(){
-          return rootH.getDirectoryHandle(key, { create: false }).then(function(itemDirH){
+      return listEntriesCancellable(rootH, gen, function(e){ return e.kind === "directory" && !!byKey[e.name]; }).then(function(matched){
+        if (!planWorkIsCurrent(gen)) return;
+        // Every key with no folder has no status history -- a live answer
+        // in its own right (clears a stale remembered badge).
+        var present = {};
+        matched.forEach(function(d){ present[d.name] = true; });
+        Object.keys(byKey).forEach(function(key){ if (!present[key]) paint(key, ""); });
+        var tasks = matched.map(function(itemDirH){
+          return function(){
             return listEntriesCancellable(itemDirH, gen, function(h){ return h.kind === "file" && /\.json$/i.test(h.name); }).then(function(fileHandles){
               var events = [];
               return fileHandles.reduce(function(chain, fh){
@@ -3202,35 +3278,23 @@ body.plan-fullscreen .plan-viewport{
                   return readJsonFileHandle(fh).then(function(ev){ if (ev) events.push(ev); });
                 });
               }, Promise.resolve()).then(function(){ return events; });
+            }).then(function(events){
+              if (!planWorkIsCurrent(gen)) return;
+              paint(itemDirH.name, joineryDisplayIcon(foldJoineryStatusEvents(events)));
             });
-          }, function(){ return null; }).then(function(events){
-            if (!planWorkIsCurrent(gen)) return;
-            if (!events){
-              // No status history for this item (the common case) -- a live
-              // answer in its own right: clear any stale remembered badge.
-              byKey[key].forEach(function(entry){
-                entry.refs.jobStatusBadge.textContent = "";
-                entry.refs.jobStatusBadge.style.display = "none";
-                entry.liveBadge = true;
-                rememberMarkerSnapshot(entry, { badge: "" });
-              });
-              return;
-            }
-            var icon = joineryDisplayIcon(foldJoineryStatusEvents(events));
-            byKey[key].forEach(function(entry){
-              entry.refs.jobStatusBadge.textContent = icon;
-              entry.refs.jobStatusBadge.style.display = icon ? "" : "none";
-              entry.liveBadge = true;
-              rememberMarkerSnapshot(entry, { badge: icon });
-            });
-          });
-        };
+          };
+        });
+        return runPlanTasksLimited(tasks, PLAN_STATUS_CONCURRENCY, gen).then(function(){
+          endTimer((planWorkIsCurrent(gen) ? "" : "cancelled, ") + matched.length + " of " + Object.keys(byKey).length + " items have history");
+        });
       });
-      return runPlanTasksLimited(tasks, PLAN_STATUS_CONCURRENCY, gen);
-    }).then(function(){
-      endTimer(planWorkIsCurrent(gen) ? undefined : "cancelled");
-    }).catch(function(){ /* no status history in this project yet -- badges just stay hidden */ });
+    }, function(){
+      // No Joinery Status folder at all yet -- nothing on this level has a badge.
+      Object.keys(byKey).forEach(function(key){ paint(key, ""); });
+      endTimer("no status folder");
+    }).catch(function(){ /* badges just stay as they were */ });
   }
+
 
 
   /* ============================== "Delivery locations" layer (2026-09-23) ==============================
@@ -3584,7 +3648,7 @@ body.plan-fullscreen .plan-viewport{
     state.roomName = name;
     state.currentJoineryNo = "";
     updateCrumbs();
-    var roomHandlePromise = state.projectIsFlat ? Promise.resolve(null) : state.levelHandle.getDirectoryHandle(name);
+    var roomHandlePromise = state.projectIsFlat ? Promise.resolve(null) : getCachedDir(state.levelHandle, "level\u0000" + state.levelName, [name], false);
     return roomHandlePromise.then(function(dirH){
       state.roomHandle = dirH;
       return ensureItpRoomFolder();
@@ -3618,7 +3682,7 @@ body.plan-fullscreen .plan-viewport{
     state.roomName = roomName;
     state.currentJoineryNo = "";
     updateCrumbs();
-    var roomHandlePromise = state.projectIsFlat ? Promise.resolve(null) : state.levelHandle.getDirectoryHandle(roomName);
+    var roomHandlePromise = state.projectIsFlat ? Promise.resolve(null) : getCachedDir(state.levelHandle, "level\u0000" + state.levelName, [roomName], false);
     return roomHandlePromise.then(function(dirH){
       state.roomHandle = dirH;
       return ensureItpRoomFolder();
@@ -3678,7 +3742,7 @@ body.plan-fullscreen .plan-viewport{
     state.roomName = roomName;
     state.currentJoineryNo = "";
     updateCrumbs();
-    var roomHandlePromise = state.projectIsFlat ? Promise.resolve(null) : state.levelHandle.getDirectoryHandle(roomName);
+    var roomHandlePromise = state.projectIsFlat ? Promise.resolve(null) : getCachedDir(state.levelHandle, "level\u0000" + state.levelName, [roomName], false);
     return roomHandlePromise.then(function(dirH){
       state.roomHandle = dirH;
       return ensureItpRoomFolder();
