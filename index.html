@@ -1416,23 +1416,6 @@ body.plan-fullscreen .plan-viewport{
       })).then(function(list){ return list.filter(Boolean); });
     });
   }
-  // Same fold as readJoineryStatuses, but scoped to a known, small set of
-  // keys instead of discovering and folding EVERY joinery item in the
-  // entire project (2026-09-25, part of the "itps still taking minutes to
-  // load pages on android" fix -- see renderLevelPlanScreen's own comment
-  // at its call site). A level's own plan only ever needs the handful of
-  // items actually marked on THAT level, not the whole project's status
-  // history -- on a large multi-level building this is the difference
-  // between folding a few dozen items' events and folding every item on
-  // every level, every single time the plan is opened.
-  function readJoineryStatusesForKeys(projectHandle, keys){
-    if (!projectHandle || !keys || !keys.length) return Promise.resolve([]);
-    return migrateLegacyJoineryStatusIfNeeded(projectHandle).then(function(){
-      return Promise.all(keys.map(function(key){
-        return listJoineryStatusEventsForItem(projectHandle, key).then(foldJoineryStatusEvents);
-      })).then(function(list){ return list.filter(Boolean); });
-    });
-  }
   function findJoineryStatus(list, level, room, joineryId){
     for (var i = 0; i < list.length; i++){
       var rec = list[i];
@@ -1762,6 +1745,10 @@ body.plan-fullscreen .plan-viewport{
     screens[n] = document.getElementById("screen" + n);
   });
   function showScreen(name){
+    // Leaving the Level Plan by any route stops its background status
+    // loading from starting any more file reads (see "Level Plan
+    // background status loading" further down).
+    if (name !== "LevelPlan") cancelPlanBackgroundWork();
     Object.keys(screens).forEach(function(n){ screens[n].classList.toggle("active", n === name); });
     // Level Plan goes full-viewport, edge-to-edge, same as Site Measure/the
     // Viewer's own canvas -- see the "plan-fullscreen" CSS block for why.
@@ -2766,35 +2753,16 @@ body.plan-fullscreen .plan-viewport{
     // Fit once the screen is actually visible (see the checklist screen's
     // own signature-pad bug/fix for why this can't happen before showScreen).
     requestAnimationFrame(fitPlanView);
-    // Resolve each marker's real status independently -- one item's status
-    // taking longer never blocks the others from updating as soon as
-    // they're ready.
-    markerRefs.forEach(function(entry){
-      computeItemItpStatus(entry.roomName, entry.joineryCode).then(function(status){
-        var color = status.total === 0 ? PLAN_MARKER_INCOMPLETE_COLOR :
-          (status.complete ? PLAN_MARKER_COMPLETE_COLOR : PLAN_MARKER_INCOMPLETE_COLOR);
-        entry.refs.statusCircle.setAttribute("fill", color);
-        entry.refs.glyph.textContent = status.complete ? "✓" : "✕";
-      });
-    });
-    // Scoped to just THIS level's own markers (2026-09-25) -- see
-    // readJoineryStatusesForKeys' own comment for why. Used to be one read
-    // of the WHOLE project's shared status data, which meant folding every
-    // joinery item on every level, every time this screen opened; the exact
-    // keys needed are already known right here from the markers this plan
-    // is about to draw, so there's no reason to discover (or fold) anything
-    // beyond them.
-    var levelStatusKeys = markerRefs.map(function(entry){
-      return joineryItemPageKey(state.levelName, entry.roomName, entry.joineryCode);
-    });
-    readJoineryStatusesForKeys(state.projectHandle, levelStatusKeys).then(function(list){
-      markerRefs.forEach(function(entry){
-        var rec = findJoineryStatus(list, state.levelName, entry.roomName, entry.joineryCode);
-        var icon = joineryDisplayIcon(rec);
-        entry.refs.jobStatusBadge.textContent = icon;
-        entry.refs.jobStatusBadge.style.display = icon ? "" : "none";
-      });
-    });
+    // Marker ✓/✕ and status badges load in the background, throttled and
+    // cancellable -- see the "Level Plan background status loading" block
+    // below for the full story (this used to fire one full checklist read
+    // per marker, all at once, which is what made tapping a marker take
+    // ~40s on Android). A fresh generation supersedes any still-running
+    // load from a previous visit to this (or any other) level.
+    cancelPlanBackgroundWork();
+    var gen = planBgGeneration;
+    loadLevelPlanItpStatuses(markerRefs, gen);
+    loadLevelPlanJobStatusBadges(markerRefs, gen);
     // "Delivery locations" reference layer (2026-09-23) -- see
     // renderDeliveryLocationsLayer's own comment further down. Cheap no-op
     // (clears the layer and returns) whenever the checkbox is off, which is
@@ -2802,6 +2770,235 @@ body.plan-fullscreen .plan-viewport{
     // actually switched it on.
     renderDeliveryLocationsLayer(plan);
     return Promise.resolve();
+  }
+
+  /* ============================== Level Plan background status loading (2026-09-25, round 2) ==============================
+     Andrew, right after v26's Items-list fix: "still takes about 40 seconds
+     to load the actual itp from a floor plan, but from the list its
+     instant." Root cause: renderLevelPlanScreen used to call
+     computeItemItpStatus for EVERY marker on the level at once -- each one
+     a full read + JSON.parse of that item's checklist (photos and signature
+     images included) just to pick ✓ or ✕ -- plus one Project Saves ->
+     Joinery Status -> <key> lookup chain per marker for the status badges.
+     The plan itself paints instantly (markers show "…" while loading), so
+     the screen LOOKS ready, but on Android the file layer (Storage Access
+     Framework) is still grinding through a few hundred queued reads behind
+     it. Tapping a marker then puts openItem's own read at the back of that
+     queue -- hence ~40s from the plan, instant from the list (no flood).
+
+     Three changes, all here:
+     1. Marker ✓/✕ now comes from the item-status index (same cache the
+        Items list uses) -- one small index read per ROOM on the level, not
+        one full checklist read per item. Which items exist at all comes
+        from ONE directory listing (flat: the shared checklist folder; legacy:
+        one per room), so never-started items resolve instantly without a
+        per-item lookup. Only items that exist but aren't in the index yet
+        (first visit after this update, or a file synced in from elsewhere)
+        still need a full read, and those backfill the index room-by-room so
+        the next visit doesn't.
+     2. Status badges list the Joinery Status folder ONCE and only read
+        event folders for keys that actually exist there, instead of three
+        chained lookups per marker (most of which fail, for items with no
+        status history yet).
+     3. Everything that remains goes through a small queue -- at most
+        PLAN_STATUS_CONCURRENCY file operations in flight -- that stops
+        starting new work the moment anyone navigates off the plan
+        (cancelPlanBackgroundWork, called by openItem / openItemFromMarker /
+        openReworkFromMarker / openRoom and on any screen change away from
+        LevelPlan). So a marker tap waits behind at most a couple of in-flight
+        reads, never the whole level's backlog. Markers not yet resolved when
+        work is cancelled just stay "…" -- they're recomputed next time the
+        plan opens, and the index makes that fast.
+     Same staleness trade-off as the Items list (see the item-status index
+     block's own comment): a marker can show a stale ✓/✕ for an item changed
+     by another device until someone opens or saves it here. openItem always
+     reads the real file, so this is display-only. */
+  var PLAN_STATUS_CONCURRENCY = 3;
+  var planBgGeneration = 0;
+  function cancelPlanBackgroundWork(){ planBgGeneration++; }
+  function planWorkIsCurrent(gen){ return gen === planBgGeneration; }
+  // Runs `tasks` (functions returning promises) with at most `limit` in
+  // flight. Once `gen` is stale, no NEW task starts; in-flight ones are
+  // left to finish (a started file read can't be aborted anyway).
+  function runPlanTasksLimited(tasks, limit, gen){
+    var next = 0;
+    function worker(){
+      if (next >= tasks.length || !planWorkIsCurrent(gen)) return Promise.resolve();
+      var task = tasks[next++];
+      return Promise.resolve().then(task).catch(function(){}).then(worker);
+    }
+    var workers = [];
+    for (var w = 0; w < Math.min(limit, tasks.length); w++) workers.push(worker());
+    return Promise.all(workers);
+  }
+  function applyMarkerItpStatus(entry, status){
+    var color = status.total === 0 ? PLAN_MARKER_INCOMPLETE_COLOR :
+      (status.complete ? PLAN_MARKER_COMPLETE_COLOR : PLAN_MARKER_INCOMPLETE_COLOR);
+    entry.refs.statusCircle.setAttribute("fill", color);
+    entry.refs.glyph.textContent = status.complete ? "✓" : "✕";
+  }
+  function nameSet(names){
+    var set = {};
+    (names || []).forEach(function(n){ set[n] = true; });
+    return set;
+  }
+  // Same validity bar checklistProgress/itemIndexEntryFromData need -- a
+  // file that doesn't meet it is still shown (as incomplete, exactly as
+  // computeItemItpStatus always did) but never written into the index.
+  function isIndexableChecklist(data){
+    return !!(data && Array.isArray(data.rows) && data.signoff &&
+      data.signoff.installer && data.signoff.supervisor);
+  }
+  function loadLevelPlanItpStatuses(markerRefs, gen){
+    var levelName = state.levelName, isFlat = state.projectIsFlat, projectHandle = state.projectHandle;
+    var legacyRoomMarkers = []; // pre-joinery-code markers -- room-wide status, unchanged logic
+    var byRoom = {};
+    markerRefs.forEach(function(entry){
+      if (!entry.joineryCode){ legacyRoomMarkers.push(entry); return; }
+      (byRoom[entry.roomName] = byRoom[entry.roomName] || []).push(entry);
+    });
+    var roomNames = Object.keys(byRoom);
+
+    // Step 1: which checklist files exist, and where to read them from.
+    // Flat: one listing of the one shared folder covers every room.
+    var flatDirP = isFlat
+      ? getItpChecklistsDirFlat(projectHandle, false).then(function(dirH){
+          return listJsonFileNames(dirH).then(function(names){ return { handle: dirH, set: nameSet(names) }; });
+        }, function(){ return { handle: null, set: {} }; })
+      : Promise.resolve(null);
+
+    return flatDirP.then(function(flatDir){
+      if (!planWorkIsCurrent(gen)) return;
+      var missTasks = [];
+      // Step 2: per room -- read its index (+ legacy: list its folder) and
+      // resolve everything we can without touching a real checklist file.
+      var roomTasks = roomNames.map(function(roomName){
+        return function(){
+          var existingP = isFlat
+            ? Promise.resolve({ set: flatDir.set, resolve: function(){ return flatDir.handle; } })
+            : listItpRoomFilesLegacyMerged(levelName, roomName).then(function(merged){
+                return { set: nameSet(merged.names), resolve: merged.resolve };
+              }, function(){ return { set: {}, resolve: function(){ return null; } }; });
+          return Promise.all([readItemIndexFor(levelName, roomName), existingP]).then(function(res){
+            if (!planWorkIsCurrent(gen)) return;
+            var index = res[0], existing = res[1];
+            var roomMisses = [];
+            byRoom[roomName].forEach(function(entry){
+              var fileName = itpChecklistFileNameFor(levelName, roomName, entry.joineryCode, isFlat);
+              if (!existing.set[fileName]){
+                applyMarkerItpStatus(entry, { complete: false, total: 0 }); // not started yet
+                return;
+              }
+              var cached = index[fileName];
+              if (cached && typeof cached === "object"){
+                applyMarkerItpStatus(entry, { complete: !!(cached.bothSigned && !cached.hasNo), total: 1 });
+                return;
+              }
+              roomMisses.push({ entry: entry, fileName: fileName });
+            });
+            if (!roomMisses.length) return;
+            // Step 3 (queued below): full reads for cache misses only,
+            // backfilling this room's index once its last miss is done.
+            var backfill = {}, remaining = roomMisses.length;
+            roomMisses.forEach(function(miss){
+              missTasks.push(function(){
+                var dirH = existing.resolve(miss.fileName);
+                if (!dirH) return Promise.resolve();
+                return dirH.getFileHandle(miss.fileName).then(function(fh){ return fh.getFile(); })
+                  .then(function(file){ return file.text(); })
+                  .then(function(text){
+                    var data = null;
+                    try{ data = JSON.parse(text); }catch(e){ data = null; }
+                    applyMarkerItpStatus(miss.entry, { complete: isChecklistSignedOff(data), total: 1 });
+                    if (isIndexableChecklist(data)) backfill[miss.fileName] = itemIndexEntryFromData(data);
+                  }, function(){
+                    applyMarkerItpStatus(miss.entry, { complete: false, total: 0 });
+                  }).then(function(){
+                    remaining--;
+                    if (remaining === 0 && planWorkIsCurrent(gen) && Object.keys(backfill).length){
+                      return writeItemIndexEntriesFor(levelName, roomName, backfill);
+                    }
+                  });
+              });
+            });
+          });
+        };
+      });
+      var legacyTasks = legacyRoomMarkers.map(function(entry){
+        return function(){
+          return computeRoomItpStatus(entry.roomName).then(function(status){
+            if (planWorkIsCurrent(gen)) applyMarkerItpStatus(entry, status);
+          });
+        };
+      });
+      // Cheap index reads first (most markers resolve here), then the
+      // expensive full reads; legacy room-wide markers last.
+      return runPlanTasksLimited(roomTasks, PLAN_STATUS_CONCURRENCY, gen).then(function(){
+        return runPlanTasksLimited(missTasks, PLAN_STATUS_CONCURRENCY, gen);
+      }).then(function(){
+        return runPlanTasksLimited(legacyTasks, PLAN_STATUS_CONCURRENCY, gen);
+      });
+    }).catch(function(err){
+      console.error("Loading plan marker statuses failed:", err);
+    });
+  }
+  function loadLevelPlanJobStatusBadges(markerRefs, gen){
+    var levelName = state.levelName, projectHandle = state.projectHandle;
+    if (!projectHandle || !markerRefs.length) return Promise.resolve();
+    var byKey = {};
+    markerRefs.forEach(function(entry){
+      var key = joineryItemPageKey(levelName, entry.roomName, entry.joineryCode);
+      (byKey[key] = byKey[key] || []).push(entry);
+    });
+    return migrateLegacyJoineryStatusIfNeeded(projectHandle).then(function(){
+      return getJoineryStatusEventsRootDir(projectHandle, false);
+    }).then(function(rootH){
+      if (!planWorkIsCurrent(gen)) return;
+      var present = [];
+      var iter = rootH.values();
+      function step(){
+        return iter.next().then(function(res){
+          if (res.done) return;
+          if (res.value && res.value.kind === "directory" && byKey[res.value.name]) present.push(res.value);
+          return step();
+        });
+      }
+      return step().then(function(){
+        var tasks = present.map(function(itemDirH){
+          return function(){
+            // Handles straight from the listing (no per-file lookup), read
+            // one at a time so this task is only ever one file op in flight.
+            var fileHandles = [];
+            var it = itemDirH.values();
+            function collect(){
+              return it.next().then(function(res){
+                if (res.done) return;
+                if (res.value && res.value.kind === "file" && /\.json$/i.test(res.value.name)) fileHandles.push(res.value);
+                return collect();
+              });
+            }
+            return collect().then(function(){
+              var events = [];
+              return fileHandles.reduce(function(chain, fh){
+                return chain.then(function(){
+                  if (!planWorkIsCurrent(gen)) return;
+                  return readJsonFileHandle(fh).then(function(ev){ events.push(ev); });
+                });
+              }, Promise.resolve()).then(function(){ return events; });
+            }).then(function(events){
+              if (!planWorkIsCurrent(gen)) return;
+              var rec = foldJoineryStatusEvents(events.filter(function(e){ return e && typeof e === "object"; }));
+              var icon = joineryDisplayIcon(rec);
+              byKey[itemDirH.name].forEach(function(entry){
+                entry.refs.jobStatusBadge.textContent = icon;
+                entry.refs.jobStatusBadge.style.display = icon ? "" : "none";
+              });
+            });
+          };
+        });
+        return runPlanTasksLimited(tasks, PLAN_STATUS_CONCURRENCY, gen);
+      });
+    }).catch(function(){ /* no status history in this project yet -- badges just stay hidden */ });
   }
 
   /* ============================== "Delivery locations" layer (2026-09-23) ==============================
@@ -3151,6 +3348,7 @@ body.plan-fullscreen .plan-viewport{
     });
   }
   function openRoom(name){
+    cancelPlanBackgroundWork(); // a legacy no-code marker tap lands here straight from the plan
     state.roomName = name;
     state.currentJoineryNo = "";
     updateCrumbs();
@@ -3179,6 +3377,10 @@ body.plan-fullscreen .plan-viewport{
   // room's item list, same as opening it the normal way, since this sets
   // up state exactly like openRoom() would.
   function openItemFromMarker(roomName, joineryCode){
+    // Stop the plan's background status loading from queuing any more file
+    // reads ahead of this item's own -- the whole point of the 2026-09-25
+    // round-2 fix (see "Level Plan background status loading").
+    cancelPlanBackgroundWork();
     state.roomName = roomName;
     state.currentJoineryNo = "";
     updateCrumbs();
@@ -3236,6 +3438,7 @@ body.plan-fullscreen .plan-viewport{
   // ensureReworkFolder's own comment for where the rework file itself
   // lives, in either project shape.
   function openReworkFromMarker(roomName, joineryCode){
+    cancelPlanBackgroundWork(); // same reason as openItemFromMarker
     state.roomName = roomName;
     state.currentJoineryNo = "";
     updateCrumbs();
@@ -3310,7 +3513,15 @@ body.plan-fullscreen .plan-viewport{
      in a single batched write so every visit after that first one is fast.
   */
   function itpIndexBranchName(){ return "Install ITP Index"; }
-  function getItemIndexDir(create){
+  // The *For(levelName, roomName) forms (2026-09-25, round 2) take the
+  // level/room explicitly, so the Level Plan screen can read the index for
+  // every room on a level without touching state.roomName; the plain forms
+  // below them are the original current-room wrappers, unchanged in
+  // behaviour. levelName/roomName are captured up front by every caller,
+  // never re-read from state mid-chain, so a navigation that changes
+  // state.roomName while a write is in flight can't redirect it to the
+  // wrong room's index.
+  function getItemIndexDirFor(levelName, create){
     if (state.projectIsFlat){
       return state.projectHandle.getDirectoryHandle("Project Saves", { create: !!create }).then(function(psH){
         return psH.getDirectoryHandle("UTZLINE ITP", { create: !!create });
@@ -3319,29 +3530,31 @@ body.plan-fullscreen .plan-viewport{
       });
     }
     return state.projectHandle.getDirectoryHandle(itpIndexBranchName(), { create: !!create }).then(function(rootH){
-      return rootH.getDirectoryHandle(state.levelName, { create: !!create });
+      return rootH.getDirectoryHandle(levelName, { create: !!create });
     });
   }
-  function itemIndexFileName(){
+  function itemIndexFileNameFor(levelName, roomName){
     return state.projectIsFlat
-      ? sanitizeFileBase(state.levelName) + " - " + sanitizeFileBase(state.roomName) + ".json"
-      : sanitizeFileBase(state.roomName) + ".json";
+      ? sanitizeFileBase(levelName) + " - " + sanitizeFileBase(roomName) + ".json"
+      : sanitizeFileBase(roomName) + ".json";
   }
-  function readItemIndex(){
-    return getItemIndexDir(false).then(function(dirH){
-      return dirH.getFileHandle(itemIndexFileName(), { create: false });
+  function readItemIndexFor(levelName, roomName){
+    return getItemIndexDirFor(levelName, false).then(function(dirH){
+      return dirH.getFileHandle(itemIndexFileNameFor(levelName, roomName), { create: false });
     }).then(function(fh){ return fh.getFile(); })
       .then(function(file){ return file.text(); })
       .then(function(text){
         try{ var parsed = JSON.parse(text); return (parsed && typeof parsed === "object") ? parsed : {}; }catch(e){ return {}; }
       }).catch(function(){ return {}; }); // missing folder/file/bad JSON -- just means every item is a cache miss this time
   }
-  function writeItemIndexEntries(entries){
+  function readItemIndex(){ return readItemIndexFor(state.levelName, state.roomName); }
+  function writeItemIndexEntries(entries){ return writeItemIndexEntriesFor(state.levelName, state.roomName, entries); }
+  function writeItemIndexEntriesFor(levelName, roomName, entries){
     if (!entries || !Object.keys(entries).length) return Promise.resolve();
-    return readItemIndex().then(function(index){
+    return readItemIndexFor(levelName, roomName).then(function(index){
       Object.keys(entries).forEach(function(k){ index[k] = entries[k]; });
-      return getItemIndexDir(true).then(function(dirH){
-        return dirH.getFileHandle(itemIndexFileName(), { create: true });
+      return getItemIndexDirFor(levelName, true).then(function(dirH){
+        return dirH.getFileHandle(itemIndexFileNameFor(levelName, roomName), { create: true });
       }).then(function(fh){ return fh.createWritable(); })
         .then(function(w){ return w.write(JSON.stringify(index)).then(function(){ return w.close(); }); });
     }).catch(function(err){
