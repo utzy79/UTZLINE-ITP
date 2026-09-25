@@ -4154,22 +4154,43 @@ body.plan-fullscreen .plan-viewport{
       // syncJoineryStatusFromChecklist's own comment) -- never blocks the
       // save itself finishing on this extra write.
       syncJoineryStatusFromChecklist(savedData, savedLevel, savedRoom, savedJoinery);
-      // Auto-export a PDF the moment this checklist reaches "Signed off",
-      // and again on every later edit made while it's still signed off --
-      // Andrew, confirmed via a direct question during the 2026-09-24
-      // Joinery Item page overhaul, choosing this over "export on every
-      // save" specifically to keep the PDF folder from filling up with
-      // mid-progress exports. Reuses the exact same exportChecklistPdf()
+      // Auto-export a PDF the moment this checklist reaches "Signed off" --
+      // UPDATE (2026-09-25): only on that transition itself, not on every
+      // later edit made while it stays signed off any more. The original
+      // 2026-09-24 choice (Andrew, confirmed via a direct question during
+      // the Joinery Item page overhaul) was to re-export on every later
+      // edit too, so the PDF always reflected the latest state -- but that
+      // meant ANY post-signoff tweak (fixing a typo in a comment, adding
+      // one more photo) re-ran the full, synchronous, main-thread jsPDF
+      // pipeline -- re-embedding every photo already attached to the item
+      // -- on every single 900ms autosave. Andrew, 2026-09-25: "app is
+      // really slow on mobile onsite even working from local folder on
+      // device" -- this was the direct cause, and it was live in all
+      // three ITP apps (this one, Manufacture ITP, Delivery ITP), all
+      // added the same day. Reverted to export-once-on-the-transition, per
+      // Andrew's own follow-up call once the tradeoff was made concrete: a
+      // post-signoff edit no longer auto-refreshes the PDF on its own --
+      // "Export PDF" still does, on demand, exactly as always. This does
+      // NOT touch the separate rework-PDF sync (syncReworkPdf, wired off
+      // writeReworkFile) -- that one is already scoped to actual rework
+      // changes only, never fired from this general checklist autosave.
+      // `state.wasSignedOffLastSave` (set fresh in openItem() whenever a
+      // checklist is loaded, off its own on-disk state) is what lets this
+      // tell "just reached Signed off" apart from "was already signed off
+      // before this edit" -- reusing the exact same exportChecklistPdf()
       // the manual "Export PDF" button already calls, so an auto-exported
-      // file lands in the identical folder/timestamped-filename convention.
-      // UNLIKE the fire-and-forget sync above, this IS returned/chained --
-      // exportChecklistPdf() reads live state.* rather than the savedData
-      // snapshot, and openItem() (the only place state.currentData is ever
-      // reassigned) already starts with flushPendingSave().then(...), so
-      // chaining this here is what keeps that guarantee true: nothing can
-      // swap the active checklist out from under this export before it
-      // finishes writing.
-      if (isChecklistSignedOff(savedData)){
+      // file still lands in the identical folder/timestamped-filename
+      // convention. UNLIKE the fire-and-forget sync above, this IS
+      // returned/chained -- exportChecklistPdf() reads live state.*
+      // rather than the savedData snapshot, and openItem() (the only
+      // place state.currentData is ever reassigned) already starts with
+      // flushPendingSave().then(...), so chaining this here is what keeps
+      // that guarantee true: nothing can swap the active checklist out
+      // from under this export before it finishes writing.
+      var signedOffNow = isChecklistSignedOff(savedData);
+      var justReachedSignedOff = signedOffNow && !state.wasSignedOffLastSave;
+      state.wasSignedOffLastSave = signedOffNow;
+      if (justReachedSignedOff){
         return exportChecklistPdf().catch(function(err){
           console.error("Auto-export on sign-off failed:", err);
         });
@@ -4227,6 +4248,11 @@ body.plan-fullscreen .plan-viewport{
       if (!Array.isArray(data.photos)) data.photos = [];
       state.currentData = data;
       state.currentJoineryNo = data.joineryNo || joineryNo;
+      // See flushPendingSave's own 2026-09-25 comment: initializes the
+      // "was this item already signed off" flag from its own on-disk
+      // state, so opening an already-signed-off item and editing a
+      // comment doesn't look like a fresh transition into Signed off.
+      state.wasSignedOffLastSave = isChecklistSignedOff(data);
       updateCrumbs();
       // Show the screen BEFORE rendering into it: the signature pads size
       // their internal canvas resolution off getBoundingClientRect(), which
