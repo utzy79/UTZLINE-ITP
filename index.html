@@ -1861,13 +1861,31 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
   // only ever needs to remember one thing (the Projects root folder handle).
   var IDB_NAME = "utzline-itp-kv";
   var IDB_STORE = "kv";
+  /* One connection, opened once and reused (2026-09-25). Andrew: "still
+     having slow down after a little use, (possibly caching issues)". This
+     used to open a NEW IndexedDB connection on every call and never close
+     it -- harmless when the app touched IndexedDB twice per session, but
+     since v28 the plan's last-known snapshot reads it on every plan visit
+     and writes it on every marker result and every save, so a few minutes
+     of use left dozens to hundreds of open connections behind, each one
+     making the next slower. Now: open once, keep it; reopen only if the
+     browser closes it (versionchange / close). Same fix for the identity
+     store below. */
+  var idbConnP = null;
   function idbOpen(){
-    return new Promise(function(resolve, reject){
+    if (idbConnP) return idbConnP;
+    idbConnP = new Promise(function(resolve, reject){
       var req = indexedDB.open(IDB_NAME, 1);
       req.onupgradeneeded = function(){ req.result.createObjectStore(IDB_STORE); };
-      req.onsuccess = function(){ resolve(req.result); };
-      req.onerror = function(){ reject(req.error); };
+      req.onsuccess = function(){
+        var db = req.result;
+        db.onversionchange = function(){ db.close(); idbConnP = null; };
+        db.onclose = function(){ idbConnP = null; };
+        resolve(db);
+      };
+      req.onerror = function(){ idbConnP = null; reject(req.error); };
     });
+    return idbConnP;
   }
   function idbGet(key){
     return idbOpen().then(function(db){
@@ -1902,13 +1920,21 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
      or vice versa -- just this one small shared pair. */
   var IDENTITY_DB_NAME = "utzline-identity", IDENTITY_STORE = "kv", IDENTITY_KEY = "deviceUserName";
   var deviceUserName = "";
-  function identityDbOpen(){
-    return new Promise(function(resolve, reject){
+  var identityConnP = null;
+  function identityDbOpen(){ // one connection, reused -- see idbOpen
+    if (identityConnP) return identityConnP;
+    identityConnP = new Promise(function(resolve, reject){
       var req = indexedDB.open(IDENTITY_DB_NAME, 1);
       req.onupgradeneeded = function(){ req.result.createObjectStore(IDENTITY_STORE); };
-      req.onsuccess = function(){ resolve(req.result); };
-      req.onerror = function(){ reject(req.error); };
+      req.onsuccess = function(){
+        var db = req.result;
+        db.onversionchange = function(){ db.close(); identityConnP = null; };
+        db.onclose = function(){ identityConnP = null; };
+        resolve(db);
+      };
+      req.onerror = function(){ identityConnP = null; reject(req.error); };
     });
+    return identityConnP;
   }
   function getDeviceUserName(){
     return identityDbOpen().then(function(db){
@@ -1954,11 +1980,33 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
   ["Setup","Reconnect","Projects","Levels","LevelPlan","Rooms","Items","Checklist","Rework","Reworks"].forEach(function(n){
     screens[n] = document.getElementById("screen" + n);
   });
+  /* ---- Phone back button (2026-09-25) ----
+     Andrew: "can we make it so the phone back button goes back through the
+     app, not close the app". Every screen change pushes one browser
+     history entry; Android's back (a popstate) is turned into this app's
+     own "back" for the screen showing -- the same place its ← link goes
+     (Checklist → the room's items with the usual unsaved-changes guard;
+     Items → rooms; Rooms → levels; Level Plan → rooms; Levels → projects;
+     Rework → items; Outstanding reworks → levels). An open dialog or
+     photo is closed first instead. On the Projects screen there is
+     nothing pushed to pop, so back leaves the app as it always did. */
+  var currentScreenName = null;
+  var navPopInProgress = false;
   function showScreen(name){
     // Leaving the Level Plan by any route stops its background status
     // loading from starting any more file reads (see "Level Plan
     // background status loading" further down).
     if (name !== "LevelPlan") cancelPlanBackgroundWork();
+    if (name !== currentScreenName){
+      var BASE = { Setup: 1, Reconnect: 1, Projects: 1 };
+      if (navPopInProgress || BASE[name]){
+        try{ history.replaceState({ utz: name }, ""); }catch(e){}
+      } else {
+        try{ history.pushState({ utz: name }, ""); }catch(e){}
+      }
+      currentScreenName = name;
+      navPopInProgress = false;
+    }
     Object.keys(screens).forEach(function(n){ screens[n].classList.toggle("active", n === name); });
     // Level Plan goes full-viewport, edge-to-edge, same as Site Measure/the
     // Viewer's own canvas -- see the "plan-fullscreen" CSS block for why.
@@ -1968,6 +2016,70 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     document.body.classList.toggle("plan-fullscreen", name === "LevelPlan");
     window.scrollTo(0, 0);
   }
+  // Turns the browser's back into this app's back (see showScreen's own
+  // comment). Re-pushes an entry when the back is "consumed" by closing a
+  // dialog or by the user choosing Cancel in the unsaved-changes guard, so
+  // the next back still lands in the app.
+  function closeAnyOpenOverlay(){
+    var lb = document.getElementById("photoLightbox");
+    if (lb && !lb.hidden){ lb.hidden = true; return true; }
+    var pairs = [
+      ["markerMenuBackdrop", "markerMenuCancelBtn"], ["jobNoteViewBackdrop", "jobNoteViewCancel"],
+      ["leaveConfirmBackdrop", "leaveConfirmCancel"], ["confirmBackdrop", "confirmCancel"],
+      ["promptBackdrop", "promptCancel"], ["photoSourceBackdrop", "photoSourceCancelBtn"],
+      ["numberpadBackdrop", "numberpadCancelBtn"], ["identityAppChecksBackdrop", "identityAppChecksCancelBtn"]
+    ];
+    for (var i = 0; i < pairs.length; i++){
+      var bd = document.getElementById(pairs[i][0]);
+      if (bd && !bd.hidden){
+        var btn = document.getElementById(pairs[i][1]);
+        if (btn && getComputedStyle(btn).display !== "none") btn.click(); else bd.hidden = true;
+        return true;
+      }
+    }
+    return false;
+  }
+  function restoreHistoryEntry(){ try{ history.pushState({ utz: currentScreenName }, ""); }catch(e){} }
+  function appBack(){
+    switch (currentScreenName){
+      case "Checklist":
+        // Same guard as the ← link; a Cancel there keeps the screen, so
+        // give the history entry back.
+        if (dirty && !checklistLocked){
+          restoreHistoryEntry();
+          return showLeaveConfirm().then(function(choice){
+            if (choice === "cancel") return;
+            if (choice === "discard") dirty = false;
+            var p = choice === "save" ? flushPendingSave() : Promise.resolve();
+            // The entry was given back above; replace it with the room's.
+            return p.then(function(){ navPopInProgress = true; return goAfterSave("room"); });
+          });
+        }
+        dirty = false;
+        return goAfterSave("room");
+      case "Items": return populateRoomList().then(function(){ showScreen("Rooms"); });
+      case "LevelPlan": return populateRoomList().then(function(){ showScreen("Rooms"); });
+      case "Rooms": return populateLevelList().then(function(){ showScreen("Levels"); });
+      case "Rework": return populateItemList().then(function(){ showScreen("Items"); });
+      case "Reworks": return populateLevelList().then(function(){ showScreen("Levels"); });
+      case "Levels": return populateProjectList().then(function(){ showScreen("Projects"); });
+      default: return Promise.resolve();
+    }
+  }
+  window.addEventListener("popstate", function(){
+    var afterSave = document.getElementById("afterSaveBackdrop");
+    if (afterSave && !afterSave.hidden){
+      // Save & exit's where-to-next: back = "Return to room" (it navigates itself).
+      navPopInProgress = true;
+      document.getElementById("afterSaveRoomBtn").click();
+      return;
+    }
+    if (closeAnyOpenOverlay()){ restoreHistoryEntry(); return; }
+    var BASE = { Setup: 1, Reconnect: 1, Projects: 1 };
+    if (!currentScreenName || BASE[currentScreenName]) return; // nothing above the base -- the browser handles it
+    navPopInProgress = true;
+    appBack();
+  });
   var crumbsEl = document.getElementById("crumbsEl");
   function updateCrumbs(){
     var parts = [];
