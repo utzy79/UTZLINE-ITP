@@ -239,15 +239,14 @@ p.hint{ font-size:13px; color:var(--text-secondary); margin:0 0 16px; line-heigh
 }
 .back-link:hover{ color:var(--text-primary); }
 .list{ display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
-/* Install pin-drop (2026-09-25) */
+/* Photo lightbox (2026-09-25) */
+.photo-lightbox{ position:fixed; inset:0; z-index:60; background:rgba(0,0,0,.92); display:flex; align-items:center; justify-content:center; padding:16px; }
+.photo-lightbox[hidden]{ display:none; }
+.photo-lightbox img{ max-width:100%; max-height:100%; object-fit:contain; border-radius:8px; box-shadow:0 8px 40px rgba(0,0,0,.6); }
+.photo-lightbox-close{ position:absolute; top:14px; right:14px; }
+.photo-thumb img, .rework-card .photo-thumb img{ cursor:zoom-in; }
+/* "required for sign-off" tag (2026-09-25) */
 .req-tag{ font-size:10px; font-weight:600; letter-spacing:.02em; text-transform:none; color:var(--accent); border:1px solid var(--accent); border-radius:6px; padding:1px 6px; margin-left:8px; vertical-align:middle; }
-.pin-drop-row{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:6px 0 4px; }
-.pin-drop-status{ font-size:13px; color:var(--text-secondary); flex:1 1 200px; }
-.pin-drop-status.set{ color:var(--text); }
-.pin-drop-banner{ display:flex; align-items:center; gap:10px; margin:8px 16px 0; padding:10px 12px; border-radius:10px; background:var(--accent); color:#0b1a12; font-weight:700; font-size:14px; flex:none; }
-.pin-drop-banner[hidden]{ display:none; }
-.pin-drop-banner .mbtn{ margin-left:auto; padding:6px 12px; }
-body.pin-drop-mode #levelPlanSvg{ cursor:crosshair; }
 /* Locked (signed-off) checklist -- see checklistLockedBanner. */
 .locked-banner{ background:var(--surface-2); border:1px solid var(--accent); color:var(--text); border-radius:10px; padding:10px 12px; margin:8px 0 12px; font-weight:600; font-size:14px; }
 #screenChecklist.locked #checkRowsEl, #screenChecklist.locked .sig-pad-wrap, #screenChecklist.locked #addPhotoBtn,
@@ -367,6 +366,12 @@ textarea.notes-box{
 .rework-card .rework-where{ font-size:12px; color:var(--text-secondary); margin-bottom:4px; }
 .rework-card-head{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin-bottom:6px; flex-wrap:wrap; }
 .rework-cabinet{ font-weight:700; }
+.rework-state-chip{ font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; border-radius:6px; padding:2px 7px; border:1px solid var(--danger); color:var(--danger); }
+.rework-state-chip.state-machined, .rework-state-chip.state-manufactured{ border-color:#2563eb; color:#2563eb; }
+.rework-state-chip.state-delivered{ border-color:#b8791a; color:#b8791a; }
+.rework-state-chip.state-received{ border-color:var(--accent); color:var(--accent-ink); background:var(--accent-soft); }
+.rework-state-row{ display:flex; align-items:center; gap:8px; margin:6px 0 10px; font-size:13px; }
+.rework-state-row select{ font:inherit; font-size:13px; padding:6px 8px; }
 .rework-date{ font-size:12px; color:var(--text-secondary); }
 .rework-text{ margin:0 0 10px; white-space:pre-wrap; font-size:13px; }
 .rework-received-row{ display:flex; align-items:center; gap:8px; margin:10px 0; font-size:13px; flex-wrap:wrap; }
@@ -659,11 +664,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       </div>
     </div>
     <div class="list" id="projectListEl"></div>
-    <div class="actions-row">
-      <button class="mbtn" id="switchRootBtn">Use a Different Projects Folder</button>
-      <!-- On-device timings (2026-09-25, round 3) -- see perfStart's own comment. -->
-      <button class="mbtn" id="timingsBtn" title="How long recent actions took on this device">⏱ Timings</button>
-    </div>
+    <div class="actions-row"><button class="mbtn" id="switchRootBtn">Use a Different Projects Folder</button></div>
   </div>
 
   <!-- ---- Level list ---- -->
@@ -696,12 +697,6 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       <button type="button" class="back-link" id="backToLevelsFromPlanBtn">← All levels</button>
       <h2 id="levelPlanHeading"></h2>
     </div>
-    <!-- Pin-drop mode (2026-09-25): shown while the plan is waiting for a tap
-         to place an item's install pin. -->
-    <div class="pin-drop-banner" id="pinDropBanner" hidden>
-      <span id="pinDropBannerText">Tap where this item is installed.</span>
-      <button type="button" class="mbtn" id="pinDropCancelBtn">Cancel</button>
-    </div>
     <div class="plan-viewport" id="planViewportEl">
       <svg id="levelPlanSvg">
         <g id="levelPlanWorld">
@@ -716,19 +711,12 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
                pointer-events:none whenever the "Delivery locations"
                checkbox is off (the default). -->
           <g id="deliveryLocationsLayer" style="pointer-events:none;"></g>
-          <!-- Install pin-drops (2026-09-25): this app's OWN pins, drawn from
-               the item-status index (no extra reads). Non-interactive. -->
-          <g id="installPinsLayer" style="pointer-events:none;"></g>
           <g id="levelPlanMarkers"></g>
         </g>
       </svg>
       <button type="button" class="plan-rooms-btn" id="planViewRoomListBtn">Room list</button>
       <button type="button" class="plan-layers-btn" id="planLayersBtn" aria-label="Toggle plan layers">Layers</button>
       <div class="plan-layers-panel" id="planLayersPanel">
-        <label class="plan-layers-row">
-          <input type="checkbox" id="installPinsLayerCheckbox" checked>
-          <span>Install pin-drops</span>
-        </label>
         <label class="plan-layers-row">
           <input type="checkbox" id="deliveryLocationsLayerCheckbox">
           <span>Delivery locations</span>
@@ -748,6 +736,10 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     <button type="button" class="back-link" id="backToLevelsBtn">← All levels</button>
     <h2 id="roomsHeading"></h2>
     <p class="hint">Choose a room to see its joinery items.</p>
+    <!-- Andrew (2026-09-25): "when you open a level, instead of going to the
+         map, it should go to the room list" -- so the plan is reached from
+         here now (hidden for a level with no plan). -->
+    <div class="actions-row" id="roomsPlanRow" style="margin-bottom:10px;"><button class="mbtn mbtn-accent" id="roomsViewPlanBtn">🗺 Floor plan</button></div>
     <div class="list" id="roomListEl"></div>
   </div>
 
@@ -816,15 +808,6 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     <div class="actions-row">
       <button class="mbtn" id="addPhotoBtn">Add photo</button>
       <input type="file" id="photoFileInput" accept="image/*" multiple style="display:none;">
-    </div>
-
-    <!-- Install pin-drop (2026-09-25, Andrew: "make all items require a pin
-         drop for sign off") -- where THIS item was installed, on this
-         level's plan. Distinct from Delivery ITP's delivery-location pin. -->
-    <h2 style="font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-secondary); margin-top:18px;">Pin drop <span class="req-tag">required for sign-off</span></h2>
-    <div class="pin-drop-row">
-      <div class="pin-drop-status" id="pinDropStatus">No pin drop yet.</div>
-      <button class="mbtn" id="dropPinBtn">📍 Drop pin on floor plan</button>
     </div>
 
     <!-- Andrew (2026-09-25): "save on the itp should be save and exit, no
@@ -991,19 +974,13 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
      still opens the checklist directly, so the existing one-tap workflow
      never breaks for anyone not using rework tracking. See the pointerdown
      handler's own comment for the gesture-detection detail. -->
-<!-- On-device timings (2026-09-25, round 3): the last few dozen timed steps,
-     newest first, so a slow step on a real tablet can be pointed at rather
-     than guessed from a desk. Screenshot-friendly on purpose. -->
-<div class="modal-backdrop" id="timingsBackdrop" hidden>
-  <div class="modal-box" role="dialog" aria-modal="true" style="max-width:420px;">
-    <p style="font-weight:700; margin-bottom:6px;">Recent timings on this device</p>
-    <p class="hint" style="margin-bottom:10px;">Newest first. Open a level, tap a marker, save, go back — then check here and screenshot anything slow.</p>
-    <div id="timingsList" style="max-height:55vh; overflow:auto; font-family:'IBM Plex Mono', monospace; font-size:12px; line-height:1.5;"></div>
-    <div class="modal-actions" style="margin-top:12px;">
-      <button class="mbtn" id="timingsClearBtn">Clear</button>
-      <button class="mbtn mbtn-accent" id="timingsCloseBtn">Close</button>
-    </div>
-  </div>
+<!-- Photo lightbox (2026-09-25, Andrew: "photo on rework page needs to be
+     clickable to open a larger image") -- any photo thumbnail (rework
+     entries, the rework form, the checklist gallery) opens full-screen here;
+     tap anywhere or Close to dismiss. -->
+<div class="photo-lightbox" id="photoLightbox" hidden>
+  <img id="photoLightboxImg" alt="Photo">
+  <button type="button" class="mbtn photo-lightbox-close" id="photoLightboxClose">Close</button>
 </div>
 
 <div class="modal-backdrop" id="markerMenuBackdrop" hidden>
@@ -1148,6 +1125,19 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
   }
   var toastEl = document.getElementById("toast");
   var toastTimer = null;
+  // Photo lightbox (2026-09-25) -- see the markup comment.
+  var photoLightbox = document.getElementById("photoLightbox");
+  var photoLightboxImg = document.getElementById("photoLightboxImg");
+  function openPhotoLightbox(dataUrl){
+    photoLightboxImg.src = dataUrl;
+    photoLightbox.hidden = false;
+  }
+  function closePhotoLightbox(){ photoLightbox.hidden = true; photoLightboxImg.src = ""; }
+  photoLightbox.addEventListener("click", closePhotoLightbox);
+  document.getElementById("photoLightboxClose").addEventListener("click", function(e){ e.stopPropagation(); closePhotoLightbox(); });
+  function makePhotoZoomable(img, dataUrl){
+    img.addEventListener("click", function(e){ e.stopPropagation(); openPhotoLightbox(dataUrl); });
+  }
   function showToast(msg){
     toastEl.textContent = msg;
     toastEl.classList.add("show");
@@ -1212,9 +1202,11 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
      honest problem is that nobody at the desk can see WHICH step is slow
      on the actual tablet. So the app now times its own key steps (opening
      a level/plan, tapping a marker through to the checklist showing,
-     saving, going back to the list) and keeps the last few dozen results.
-     "⏱ Timings" on the Projects screen shows them, newest first, ready to
-     screenshot. Costs nothing measurable: a Date.now() pair per step. */
+     saving, going back to the list) and keeps the last few dozen results in
+     memory (perfLog); anything over 1.5 s is also console.warn'ed. The
+     "⏱ Timings" button that showed them (rounds 3-5) was removed at
+     Andrew's request once the slowness was sorted ("get rid of the timings
+     button") -- the log itself stays, cheap and useful in devtools. */
   var perfLog = [];
   var PERF_LOG_MAX = 60;
   function perfStart(label){
@@ -1966,7 +1958,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     // Leaving the Level Plan by any route stops its background status
     // loading from starting any more file reads (see "Level Plan
     // background status loading" further down).
-    if (name !== "LevelPlan"){ cancelPlanBackgroundWork(); if (pinDropMode) exitPinDropMode(); }
+    if (name !== "LevelPlan") cancelPlanBackgroundWork();
     Object.keys(screens).forEach(function(n){ screens[n].classList.toggle("active", n === name); });
     // Level Plan goes full-viewport, edge-to-edge, same as Site Measure/the
     // Viewer's own canvas -- see the "plan-fullscreen" CSS block for why.
@@ -2580,30 +2572,6 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     populateProjectList().then(function(){ showScreen("Projects"); });
   });
 
-  // "⏱ Timings" (2026-09-25, round 3) -- see perfStart's own comment.
-  var timingsBackdrop = document.getElementById("timingsBackdrop");
-  var timingsList = document.getElementById("timingsList");
-  function renderTimings(){
-    timingsList.innerHTML = "";
-    if (!perfLog.length){
-      timingsList.innerHTML = '<div class="empty-note">Nothing timed yet — open a level, tap a marker, save, or go back, then look here.</div>';
-      return;
-    }
-    perfLog.forEach(function(e){
-      var line = document.createElement("div");
-      var slow = e.ms >= 3000 ? " (slow)" : e.ms >= 1000 ? " (hmm)" : "";
-      line.textContent = pad2(e.at.getHours()) + ":" + pad2(e.at.getMinutes()) + ":" + pad2(e.at.getSeconds()) +
-        "  " + String(e.ms).padStart(6, " ") + " ms  " + e.label + slow;
-      if (e.ms >= 3000) line.style.color = "#c8391c";
-      timingsList.appendChild(line);
-    });
-    function pad2(n){ return (n < 10 ? "0" : "") + n; }
-  }
-  document.getElementById("timingsBtn").addEventListener("click", function(){ renderTimings(); timingsBackdrop.hidden = false; });
-  document.getElementById("timingsCloseBtn").addEventListener("click", function(){ timingsBackdrop.hidden = true; });
-  document.getElementById("timingsClearBtn").addEventListener("click", function(){ perfLog.length = 0; renderTimings(); });
-  timingsBackdrop.addEventListener("click", function(e){ if (e.target === timingsBackdrop) timingsBackdrop.hidden = true; });
-
   /* ============================== level list ============================== */
   var levelListEl = document.getElementById("levelListEl");
   function populateLevelList(){
@@ -2689,14 +2657,15 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       return plan;
     });
   }
+  // Opening a level lands on its ROOM LIST (Andrew, 2026-09-25: "when you
+  // open a level, instead of going to the map, it should go to the room
+  // list"); the "Floor plan" button there opens the plan. The level's plan
+  // is still loaded here (currentLevelPlan) so that button, "Go to
+  // location" and the rest are instant.
   function openLevel(name){
-    var endLevelTimer = perfStart("level \u2192 plan on screen");
+    var endLevelTimer = perfStart("level \u2192 room list on screen");
     return loadLevelContext(name).then(function(plan){
-      if (plan){
-        return renderLevelPlanScreen(plan).then(function(){ showScreen("LevelPlan"); endLevelTimer(plan.roomlinks.length + " markers"); });
-      }
-      endLevelTimer("no plan");
-      return populateRoomList().then(function(){ showScreen("Rooms"); });
+      return populateRoomList().then(function(){ showScreen("Rooms"); endLevelTimer(plan ? plan.roomlinks.length + " markers loaded" : "no plan"); });
     }).catch(function(err){
       console.error("Open level failed:", err);
       showToast("Couldn't open that level \u2014 try again.");
@@ -2710,6 +2679,11 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
   });
   document.getElementById("planViewRoomListBtn").addEventListener("click", function(){
     populateRoomList().then(function(){ showScreen("Rooms"); });
+  });
+  document.getElementById("roomsViewPlanBtn").addEventListener("click", function(){
+    if (!currentLevelPlan) return;
+    var endTimer = perfStart("rooms \u2192 plan on screen");
+    renderLevelPlanScreen(currentLevelPlan).then(function(){ showScreen("LevelPlan"); endTimer(); });
   });
 
   /* ============================== level plan viewer ==============================
@@ -2816,36 +2790,30 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
   // row flagged "No") -- factored out here (2026-09-24) so flushPendingSave's
   // new auto-export-on-sign-off hook (see its own comment) can share it
   // rather than duplicating the formula a third time.
-  /* Andrew (2026-09-25): "make all items require a pin drop for sign off.
-     if the itp gets saved without it but everything else is complete, make
-     the app request a pin drop then take you to the map (default to joinery
-     location first) also tell the user to upload a photo". So "signed off"
-     -- the one predicate behind the PDF export, the lock, the status
-     advance and the green tick -- now needs, on top of both signatures and
-     no "No": an INSTALL pin-drop on this level's plan (data.installLocationPin,
-     this app's own -- distinct from Delivery ITP's deliveryLocationPin) and
-     at least one photo. Applies to every checklist, including ones signed
-     before this shipped: those re-open as "needs pin drop" until someone
-     drops one (the PDF re-exports then, as a fresh timestamped file; the
-     shared status stays at installed -- it is forward-only). */
-  function checklistHasInstallPin(data){
-    var p = data && data.installLocationPin;
-    return !!(p && typeof p.x === "number" && typeof p.y === "number");
-  }
+  /* Sign-off requires a photo (2026-09-25). Andrew first asked for a pin
+     drop AND a photo, then: "that was a mistake, drop pin not required on
+     the install itp. we will add that the delivery itp later. but the add
+     photo will be the requirement for the install itp". So "signed off" --
+     the one predicate behind the PDF export, the lock, the status advance
+     and the green tick -- is both signatures, no "No", and at least one
+     photo. Applies to every checklist, including ones signed before this
+     shipped: one signed without a photo re-opens as "needs photo" until a
+     photo is added (its PDF then re-exports as a fresh timestamped file;
+     the shared status stays at installed -- it is forward-only). */
   function checklistHasPhoto(data){ return !!(data && Array.isArray(data.photos) && data.photos.length); }
   function isChecklistSignedOff(data){
     return !!(data && data.signoff &&
       data.signoff.installer && data.signoff.installer.sig &&
       data.signoff.supervisor && data.signoff.supervisor.sig) && !checklistHasNoAnswer(data)
-      && checklistHasInstallPin(data) && checklistHasPhoto(data);
+      && checklistHasPhoto(data);
   }
-  // "Everything except the pin drop / photo" -- what Save & exit checks to
-  // decide whether to walk the user to the plan.
-  function checklistOnlyMissingPinOrPhoto(data){
+  // "Everything except the photo" -- what Save & exit checks to decide
+  // whether to ask for one.
+  function checklistOnlyMissingPhoto(data){
     return !!(data && data.signoff &&
       data.signoff.installer && data.signoff.installer.sig &&
       data.signoff.supervisor && data.signoff.supervisor.sig) && !checklistHasNoAnswer(data)
-      && !(checklistHasInstallPin(data) && checklistHasPhoto(data));
+      && !checklistHasPhoto(data);
   }
   // Status for a single joinery item's own marker -- complete only once
   // THAT item's own checklist file has both sign-off signatures AND no row
@@ -3057,147 +3025,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     // the common case, so this never costs anything unless someone's
     // actually switched it on.
     renderDeliveryLocationsLayer(plan);
-    installPinsLayerG.innerHTML = ""; // repainted by loadLevelPlanItpStatuses from the level index
     return Promise.resolve();
-  }
-
-  /* ---- Install pin-drops (2026-09-25) ----
-     This app's own "where was it installed" pins, one per item, stored on
-     each item's checklist (installLocationPin). Drawn from the level index
-     (each entry carries `pin`), so the layer costs nothing beyond the index
-     read the ✓/✕ pass already does. Pin-drop MODE is how one gets placed:
-     enterPinDropMode(target) shows the plan with a banner, centred on the
-     item's own joinery marker ("default to joinery location first"), and
-     the next plain tap anywhere on the plan proposes that spot. */
-  var installPinsLayerG = document.getElementById("installPinsLayer");
-  var installPinsLayerCheckbox = document.getElementById("installPinsLayerCheckbox");
-  var installPlanLayersPins = true;
-  installPinsLayerCheckbox.addEventListener("change", function(){
-    installPlanLayersPins = installPinsLayerCheckbox.checked;
-    installPinsLayerG.style.display = installPlanLayersPins ? "" : "none";
-  });
-  function buildInstallPinEl(x, y, code){
-    var ns = "http://www.w3.org/2000/svg";
-    var g = document.createElementNS(ns, "g");
-    g.setAttribute("class", "install-pin");
-    g.setAttribute("data-code", code || "");
-    var stem = document.createElementNS(ns, "line");
-    stem.setAttribute("x1", x); stem.setAttribute("y1", y); stem.setAttribute("x2", x); stem.setAttribute("y2", y - 26);
-    stem.setAttribute("stroke", PLAN_MARKER_COMPLETE_COLOR); stem.setAttribute("stroke-width", "4");
-    var head = document.createElementNS(ns, "circle");
-    head.setAttribute("cx", x); head.setAttribute("cy", y - 30); head.setAttribute("r", 11);
-    head.setAttribute("fill", PLAN_MARKER_COMPLETE_COLOR); head.setAttribute("stroke", "#fff"); head.setAttribute("stroke-width", "3");
-    var dot = document.createElementNS(ns, "circle");
-    dot.setAttribute("cx", x); dot.setAttribute("cy", y); dot.setAttribute("r", 4); dot.setAttribute("fill", PLAN_MARKER_COMPLETE_COLOR);
-    g.appendChild(stem); g.appendChild(head); g.appendChild(dot);
-    return g;
-  }
-  function paintInstallPinsFromIndex(index, levelName){
-    installPinsLayerG.innerHTML = "";
-    if (!currentLevelPlan || state.levelName !== levelName) return;
-    Object.keys(index).forEach(function(k){
-      var e = index[k];
-      if (e && e.pin && typeof e.pin.x === "number") installPinsLayerG.appendChild(buildInstallPinEl(e.pin.x, e.pin.y, e.joineryNo));
-    });
-  }
-  function upsertInstallPinOnPlan(code, pin){
-    var old = installPinsLayerG.querySelector('.install-pin[data-code="' + String(code).replace(/"/g, '\\"') + '"]');
-    if (old) old.parentNode.removeChild(old);
-    if (pin) installPinsLayerG.appendChild(buildInstallPinEl(pin.x, pin.y, code));
-  }
-
-  var pinDropMode = null; // {levelName, roomName, joineryCode, fileName, needPhoto, onDone}
-  var pinDropBanner = document.getElementById("pinDropBanner");
-  var pinDropBannerText = document.getElementById("pinDropBannerText");
-  var pinDropTempEl = null;
-  function enterPinDropMode(target){
-    pinDropMode = target;
-    pinDropBannerText.textContent = "Tap the plan where " + target.joineryCode + " is installed.";
-    pinDropBanner.hidden = false;
-    document.body.classList.add("pin-drop-mode");
-    return returnToFloorPlan({ roomName: target.roomName, joineryCode: target.joineryCode });
-  }
-  function exitPinDropMode(){
-    pinDropMode = null;
-    pinDropBanner.hidden = true;
-    document.body.classList.remove("pin-drop-mode");
-    if (pinDropTempEl && pinDropTempEl.parentNode) pinDropTempEl.parentNode.removeChild(pinDropTempEl);
-    pinDropTempEl = null;
-  }
-  document.getElementById("pinDropCancelBtn").addEventListener("click", function(){
-    var t = pinDropMode;
-    exitPinDropMode();
-    showToast(t ? (t.joineryCode + " still needs a pin drop before it can be signed off.") : "Cancelled.");
-  });
-  function planWorldFromClient(cx, cy){
-    var rect = planViewportEl.getBoundingClientRect();
-    return { x: (cx - rect.left - planView.tx) / planView.scale, y: (cy - rect.top - planView.ty) / planView.scale };
-  }
-  // A plain tap on the plan while in pin-drop mode: propose the spot.
-  function handlePinDropTap(clientX, clientY){
-    var t = pinDropMode;
-    if (!t) return;
-    var w = planWorldFromClient(clientX, clientY);
-    w.x = Math.round(w.x); w.y = Math.round(w.y);
-    if (pinDropTempEl && pinDropTempEl.parentNode) pinDropTempEl.parentNode.removeChild(pinDropTempEl);
-    pinDropTempEl = buildInstallPinEl(w.x, w.y, t.joineryCode);
-    pinDropTempEl.setAttribute("opacity", "0.85");
-    levelPlanWorldG.appendChild(pinDropTempEl);
-    genericConfirm("Save the pin drop for " + t.joineryCode + " here?").then(function(ok){
-      if (!pinDropMode) return;
-      if (!ok){
-        if (pinDropTempEl && pinDropTempEl.parentNode) pinDropTempEl.parentNode.removeChild(pinDropTempEl);
-        pinDropTempEl = null;
-        return; // stay in pin-drop mode -- tap again
-      }
-      return saveInstallPin(t, w);
-    });
-  }
-  // Writes the pin onto the item's checklist (the one still loaded in
-  // state.currentData -- openItem is the only thing that reassigns it, and
-  // pin-drop mode is only ever entered from that item's own checklist).
-  function saveInstallPin(t, w){
-    var data = state.currentData;
-    if (!data || !state.currentFileHandle || state.currentFileHandle.name !== t.fileName){
-      exitPinDropMode();
-      showToast("Couldn't save the pin — open " + t.joineryCode + " again and retry.");
-      return Promise.resolve();
-    }
-    data.installLocationPin = { x: w.x, y: w.y, at: new Date().toISOString(), by: deviceUserName || "" };
-    var endTimer = perfStart("pin drop: saved");
-    return writeChecklistFile(t.fileName, data).then(function(){
-      endTimer();
-      upsertInstallPinOnPlan(t.joineryCode, w);
-      patchStoredPlanSnapshot(state.projectName, t.levelName, t.roomName, t.joineryCode, markerStatusFromIndexEntry(itemIndexEntryFromData(data)));
-      exitPinDropMode();
-      dirty = false;
-      if (!checklistHasPhoto(data)){
-        // "also tell the user to upload a photo" -- straight back into the
-        // checklist so they can add one, then Save & exit completes it.
-        return genericAlert("Pin drop saved for " + t.joineryCode + ".\n\nNow add a photo of the installed item — it's needed before this ITP can be signed off.").then(function(){
-          return openItem(t.fileName, t.joineryCode).then(function(){
-            document.getElementById("addPhotoBtn").scrollIntoView({ block: "center" });
-          });
-        });
-      }
-      if (isChecklistSignedOff(data)){
-        // The pin was the last thing missing: finish the sign-off now --
-        // status advance, PDF, then the usual where-to-next choice.
-        dirty = true;
-        var wasSignedOff = state.wasSignedOffLastSave;
-        return flushPendingSave().then(function(){
-          return showAfterSaveChoice(true, !wasSignedOff);
-        }).then(goAfterSave);
-      }
-      // Not complete yet (signatures still to come): back to the checklist
-      // the user came from, pin in place.
-      showToast("Pin drop saved for " + t.joineryCode + ".");
-      return openItem(t.fileName, t.joineryCode);
-    }, function(err){
-      endTimer("failed");
-      console.error("Saving pin drop failed:", err);
-      showToast("Couldn't save the pin — try again.");
-    });
   }
 
   /* ============================== Level Plan background status loading (2026-09-25, round 2) ==============================
@@ -3344,8 +3172,8 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     rememberMarkerSnapshot(entry, paint);
   }
   function markerStatusFromIndexEntry(e){
-    // `signed` already folds in pin-drop + photo (2026-09-25); an entry
-    // written by an older build has no hasPin at all -- trust its own
+    // `signed` already folds in the photo requirement (2026-09-25); an entry
+    // written by an older build has no hasPhoto at all -- trust its own
     // `signed` until the item is next opened or saved.
     var complete = typeof e.signed === "boolean" ? e.signed : !!(e.bothSigned && !e.hasNo);
     return { complete: complete, total: 1, started: !!(e.answered > 0 || e.bothSigned) };
@@ -3442,7 +3270,6 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     // Round 5: ONE index read for the whole level (was one per room).
     return readItemIndexFor(levelName).then(function(index){
       if (!planWorkIsCurrent(gen)) return;
-      paintInstallPinsFromIndex(index, levelName); // install pin-drops layer, free from the same read
       var roomTasks = [];
       roomNames.forEach(function(roomName){
         var unresolved = [];
@@ -3865,7 +3692,6 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
         var lpRoom = markerEl.getAttribute("data-room"), lpCode = markerEl.getAttribute("data-code");
         planLongPressTimer = setTimeout(function(){
           if (planDragStart && planDragStart.moved) return;
-          if (pinDropMode) return; // a long press is just a slow tap while placing a pin
           planLongPressFired = true;
           showMarkerMenu(lpRoom, lpCode);
         }, LONG_PRESS_MS);
@@ -3914,12 +3740,6 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       planDragStart = { x: remaining.x, y: remaining.y, tx: planView.tx, ty: planView.ty, moved: true, markerEl: null };
       planPinchStart = null;
     }
-    if (pinDropMode){
-      // Pin-drop mode (2026-09-25): any plain tap -- marker or not -- is
-      // the proposed install location.
-      if (wasPlainTap) handlePinDropTap(e.clientX, e.clientY);
-      return;
-    }
     if (tapMarkerRoom){
       // Andrew (2026-09-25): "no more press to go to itp, but press goes to
       // this menu." A plain tap and a long press now both open the marker
@@ -3940,7 +3760,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     // opens the marker menu; anywhere else it just does nothing.
     e.preventDefault();
     var markerEl = e.target.closest(".plan-marker");
-    if (!markerEl || pinDropMode) return;
+    if (!markerEl) return;
     clearPlanLongPressTimer();
     showMarkerMenu(markerEl.getAttribute("data-room"), markerEl.getAttribute("data-code"));
   });
@@ -3999,6 +3819,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       : listSubdirNames(state.levelHandle).then(function(names){
           return names.filter(function(n){ return n !== "saves" && n !== "pdfs" && n !== "backup"; });
         });
+    document.getElementById("roomsPlanRow").style.display = currentLevelPlan ? "" : "none";
     return namesPromise.then(function(names){
       // Andrew (2026-09-25): "the rooms list page needs to be in alphabetical
       // order" -- a flat project's rooms were shown in the order they were
@@ -4216,9 +4037,9 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     var answered = 0, hasNo = checklistHasNoAnswer(data);
     data.rows.forEach(function(r){ if (r.status) answered++; });
     var bothSigned = !!(data.signoff.installer.sig && data.signoff.supervisor.sig);
-    var hasPin = checklistHasInstallPin(data), hasPhoto = checklistHasPhoto(data);
-    var signed = bothSigned && !hasNo && hasPin && hasPhoto; // see isChecklistSignedOff
-    return { answered: answered, total: data.rows.length, signed: signed, bothSigned: bothSigned, hasNo: hasNo, hasPin: hasPin, hasPhoto: hasPhoto };
+    var hasPhoto = checklistHasPhoto(data);
+    var signed = bothSigned && !hasNo && hasPhoto; // see isChecklistSignedOff
+    return { answered: answered, total: data.rows.length, signed: signed, bothSigned: bothSigned, hasNo: hasNo, hasPhoto: hasPhoto };
   }
 
   /* ============================== item-status index cache (2026-09-25) ==============================
@@ -4344,8 +4165,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       joineryNo: data.joineryNo || "",
       answered: prog.answered, total: prog.total,
       signed: prog.signed, bothSigned: prog.bothSigned, hasNo: prog.hasNo,
-      hasPin: prog.hasPin, hasPhoto: prog.hasPhoto,
-      pin: prog.hasPin ? { x: data.installLocationPin.x, y: data.installLocationPin.y } : null,
+      hasPhoto: prog.hasPhoto,
       updatedAt: data.updatedAt || ""
     };
   }
@@ -4377,13 +4197,6 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
   // file. Shared by the cache-hit path AND the cold/fallback path below
   // (which computes this same entry from a full read, once, then hands it
   // here exactly the same way) so there's only one place that draws a row.
-  // "needs pin drop", "needs a photo", or both -- for chips and dialogs.
-  function missingForSignOffText(e){
-    var parts = [];
-    if (!e.hasPin) parts.push("pin drop");
-    if (!e.hasPhoto) parts.push("photo");
-    return parts.length ? "needs " + parts.join(" + ") : "";
-  }
   function renderItemRowFromEntry(fileName, entry, isArtifact, fallbackJoineryNo){
     var joineryNo = (entry && entry.joineryNo) || fallbackJoineryNo;
     var row = document.createElement("div");
@@ -4395,7 +4208,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     if (entry){
       if (entry.signed) { sub = "Signed off"; chipClass = "done"; chipText = "Signed off"; }
       else if (entry.bothSigned && entry.hasNo) { sub = "Signed — flagged item(s), not finished"; chipClass = "warn"; chipText = "Flagged"; }
-      else if (entry.bothSigned) { sub = "Signed — " + missingForSignOffText(entry); chipClass = "warn"; chipText = "Needs pin"; }
+      else if (entry.bothSigned) { sub = "Signed — needs a photo"; chipClass = "warn"; chipText = "Needs photo"; }
       else if (entry.answered > 0) sub = entry.answered + " of " + entry.total + " checked";
     }
     if (isArtifact){
@@ -4554,7 +4367,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     if (entry){
       if (entry.signed) { sub = "Signed off" + (item.description ? " · " + item.description : ""); chipClass = "done"; chipText = "Signed off"; }
       else if (entry.bothSigned && entry.hasNo) { sub = "Signed — flagged, not finished" + (item.description ? " · " + item.description : ""); chipClass = "warn"; chipText = "Flagged"; }
-      else if (entry.bothSigned) { sub = "Signed — " + missingForSignOffText(entry) + (item.description ? " · " + item.description : ""); chipClass = "warn"; chipText = "Needs pin"; }
+      else if (entry.bothSigned) { sub = "Signed — needs a photo" + (item.description ? " · " + item.description : ""); chipClass = "warn"; chipText = "Needs photo"; }
       else if (entry.answered > 0) sub = (entry.answered + " of " + entry.total + " checked") + (item.description ? " · " + item.description : "");
     }
     row.innerHTML =
@@ -4758,6 +4571,42 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
   function reworkPdfFileNameFor(joineryCode){
     return itpPdfBaseNameFor(state.levelName, state.roomName, joineryCode, state.projectIsFlat) + ".pdf";
   }
+  /* Rework state (2026-09-25, Andrew: "it also shows the current state of
+     the rework (cut - etc)"). One of REWORK_STATES, in pipeline order, using
+     the family's own vocabulary so Machine Schedule / Manufacture ITP /
+     Delivery ITP can set the same values on a rework entry later. Kept on
+     the entry as {status, statusAt, statusBy, statusHistory[]}. Ticking
+     "Received back on site" moves it to "received"; Save & close out then
+     locks it. An entry saved before today has no status -> "logged". */
+  var REWORK_STATES = [
+    { value: "logged",       label: "Logged",                 short: "Logged" },
+    { value: "machined",     label: "Cut (machined)",         short: "Cut" },
+    { value: "manufactured", label: "Manufactured",           short: "Manufactured" },
+    { value: "delivered",    label: "Delivered to site",      short: "Delivered" },
+    { value: "received",     label: "Received back on site",  short: "Received" }
+  ];
+  function reworkStateOf(entry){
+    var v = (entry && entry.status) || (entry && entry.received ? "received" : "logged");
+    for (var i = 0; i < REWORK_STATES.length; i++) if (REWORK_STATES[i].value === v) return REWORK_STATES[i];
+    return REWORK_STATES[0];
+  }
+  function setReworkState(entry, value){
+    if (!entry || entry.status === value) return false;
+    entry.status = value;
+    entry.statusAt = new Date().toISOString();
+    entry.statusBy = deviceUserName || "";
+    entry.statusHistory = Array.isArray(entry.statusHistory) ? entry.statusHistory : [];
+    entry.statusHistory.push({ status: value, at: entry.statusAt, by: entry.statusBy });
+    return true;
+  }
+  function buildReworkStateChip(entry){
+    var st = reworkStateOf(entry);
+    var chip = document.createElement("span");
+    chip.className = "rework-state-chip state-" + st.value;
+    chip.textContent = st.short;
+    chip.title = st.label + (entry.statusAt ? " \u00b7 " + formatReworkDate(entry.statusAt) + (entry.statusBy ? " \u2014 " + entry.statusBy : "") : "");
+    return chip;
+  }
   function blankReworkFile(joineryCode){
     return { schemaVersion: 1, joineryNo: joineryCode, level: state.levelName, room: state.roomName, reworks: [] };
   }
@@ -4909,11 +4758,11 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
         var date = document.createElement("span");
         date.className = "rework-date";
         date.textContent = formatReworkDate(r.entry.createdAt) + (r.entry.createdBy ? " \u2014 " + r.entry.createdBy : "");
-        head.appendChild(cab); head.appendChild(date);
+        head.appendChild(cab); head.appendChild(buildReworkStateChip(r.entry)); head.appendChild(date);
         card.appendChild(head);
         var where = document.createElement("div");
         where.className = "rework-where";
-        where.textContent = (r.entry.received ? "Received back on site" + (r.entry.receivedDate ? " " + r.entry.receivedDate : "") + " \u2014 not yet closed out" : "Rework pending");
+        where.textContent = "State: " + reworkStateOf(r.entry).label + (r.entry.received ? (r.entry.receivedDate ? " " + r.entry.receivedDate : "") + " \u2014 not yet closed out" : "");
         card.appendChild(where);
         if (r.entry.text){
           var ptxt = document.createElement("p");
@@ -4976,6 +4825,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       cell.className = "photo-thumb";
       var img = document.createElement("img");
       img.src = photo.dataUrl; img.alt = "Photo " + (idx + 1);
+      makePhotoZoomable(img, photo.dataUrl);
       cell.appendChild(img);
       var rm = document.createElement("button");
       rm.type = "button"; rm.className = "photo-thumb-remove"; rm.title = "Remove this photo"; rm.textContent = "×";
@@ -5029,6 +4879,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       receivedBy: "",   // Andrew (2026-09-25): "when a rework is returned to site, it needs a received by option"
       closed: false,    // set by "Save & close out" (2026-09-25); a closed entry is read only
       closedAt: null, closedBy: "",
+      status: "logged", statusAt: new Date().toISOString(), statusBy: deviceUserName || "", statusHistory: [{ status: "logged", at: new Date().toISOString(), by: deviceUserName || "" }],
       createdAt: new Date().toISOString(),
       createdBy: deviceUserName || ""
     };
@@ -5073,7 +4924,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       var date = document.createElement("span");
       date.className = "rework-date";
       date.textContent = formatReworkDate(entry.createdAt) + (entry.createdBy ? " — " + entry.createdBy : "");
-      head.appendChild(cab); head.appendChild(date);
+      head.appendChild(cab); head.appendChild(buildReworkStateChip(entry)); head.appendChild(date);
       card.appendChild(head);
 
       if (entry.text){
@@ -5081,6 +4932,37 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
         p.className = "rework-text";
         p.textContent = entry.text;
         card.appendChild(p);
+      }
+
+      // Current state of the rework part (2026-09-25) -- a selector on an
+      // open entry; the chip in the head shows it everywhere.
+      if (!entry.closed){
+        var stateRow = document.createElement("label");
+        stateRow.className = "rework-state-row";
+        var stateLbl = document.createElement("span");
+        stateLbl.textContent = "State";
+        var stateSel = document.createElement("select");
+        stateSel.className = "mbtn rework-state-select";
+        REWORK_STATES.forEach(function(st){
+          var o = document.createElement("option");
+          o.value = st.value; o.textContent = st.label;
+          stateSel.appendChild(o);
+        });
+        stateSel.value = reworkStateOf(entry).value;
+        stateSel.addEventListener("change", function(){
+          var v = stateSel.value;
+          if (v === "received" && !entry.received){
+            entry.received = true;
+            if (!entry.receivedDate) entry.receivedDate = new Date().toISOString().slice(0, 10);
+            if (!entry.receivedBy && deviceUserName) entry.receivedBy = deviceUserName;
+          }
+          if (setReworkState(entry, v)){
+            renderReworkList();
+            writeReworkFile();
+          }
+        });
+        stateRow.appendChild(stateLbl); stateRow.appendChild(stateSel);
+        card.appendChild(stateRow);
       }
 
       if (entry.photos && entry.photos.length){
@@ -5091,6 +4973,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
           cell.className = "photo-thumb";
           var img = document.createElement("img");
           img.src = photo.dataUrl; img.alt = "Rework photo " + (idx + 1);
+          makePhotoZoomable(img, photo.dataUrl);
           cell.appendChild(img);
           gal.appendChild(cell);
         });
@@ -5130,7 +5013,10 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
         }
         dateInput.disabled = !entry.received;
         byInput.disabled = !entry.received;
-        writeReworkFile();
+        // Keep the state in step: received <-> the tick (2026-09-25).
+        if (entry.received) setReworkState(entry, "received");
+        else if (reworkStateOf(entry).value === "received") setReworkState(entry, "delivered");
+        writeReworkFile().then(renderReworkList);
       });
       dateInput.addEventListener("change", function(){
         entry.receivedDate = dateInput.value || null;
@@ -5285,7 +5171,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       var statusReceived = !!entry.received;
       var statusText = statusReceived
         ? (entry.closed ? "CLOSED OUT" : "RECEIVED") + (entry.receivedDate ? " — " + entry.receivedDate : "") + (entry.receivedBy ? " — by " + entry.receivedBy : "")
-        : "REWORK PENDING";
+        : "REWORK PENDING — " + reworkStateOf(entry).label.toUpperCase();
 
       // Photo thumbnails, up to 3 per row, inside this entry's own card.
       var PHOTO_SIZE = 74, PHOTO_GAP = 8, PHOTO_CAPTION_H = 11;
@@ -5767,6 +5653,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       var img = document.createElement("img");
       img.src = photo.dataUrl;
       img.alt = "Photo " + (idx + 1);
+      makePhotoZoomable(img, photo.dataUrl);
       cell.appendChild(img);
       var rm = document.createElement("button");
       rm.type = "button"; rm.className = "photo-thumb-remove"; rm.title = "Remove this photo";
@@ -5933,26 +5820,6 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
   var screenChecklistEl = document.getElementById("screenChecklist");
   var checklistLockedBanner = document.getElementById("checklistLockedBanner");
   var checklistLocked = false;
-  // Pin-drop row on the checklist (2026-09-25) -- see isChecklistSignedOff.
-  var pinDropStatusEl = document.getElementById("pinDropStatus");
-  var dropPinBtn = document.getElementById("dropPinBtn");
-  function renderPinDropRow(data){
-    var has = checklistHasInstallPin(data);
-    pinDropStatusEl.textContent = has
-      ? ("📍 Pin drop set" + (data.installLocationPin.by ? " by " + data.installLocationPin.by : "") + (data.installLocationPin.at ? " · " + new Date(data.installLocationPin.at).toLocaleDateString() : ""))
-      : "No pin drop yet — needed before this ITP can be signed off.";
-    pinDropStatusEl.classList.toggle("set", has);
-    dropPinBtn.textContent = has ? "📍 Move pin on floor plan" : "📍 Drop pin on floor plan";
-  }
-  // "Drop pin": save what's on screen first (nothing is lost by leaving),
-  // then the plan in pin-drop mode centred on this item's marker.
-  dropPinBtn.addEventListener("click", function(){
-    if (!state.currentData || !state.currentFileHandle) return;
-    if (!currentLevelPlan){ showToast("This level has no floor plan yet — a pin drop needs one (add the plan in Site Measure / UTZLINE Projects)."); return; }
-    var target = { levelName: state.levelName, roomName: state.roomName, joineryCode: state.currentJoineryNo, fileName: state.currentFileHandle.name };
-    dirty = true;
-    flushPendingSave().then(function(){ return enterPinDropMode(target); });
-  });
   function setChecklistLocked(locked){
     checklistLocked = !!locked;
     screenChecklistEl.classList.toggle("locked", checklistLocked);
@@ -5962,7 +5829,6 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       el.disabled = checklistLocked;
     });
     document.getElementById("addPhotoBtn").disabled = checklistLocked;
-    dropPinBtn.disabled = checklistLocked;
     document.getElementById("saveChecklistBtn").textContent = checklistLocked ? "Exit" : "Save & exit";
   }
   function openItem(fileName, joineryNo){
@@ -5998,7 +5864,6 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       // them has to happen only once the screen is actually laid out.
       showScreen("Checklist");
       renderChecklistIntoScreen(data);
-      renderPinDropRow(data);
       setChecklistLocked(isChecklistSignedOff(data));
       endTimer((data.photos || []).length + " photos");
       // Backfill for a checklist signed off before 2026-09-22 (see
@@ -6090,33 +5955,25 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     return returnToFloorPlan({ roomName: roomName, joineryCode: joineryCode || "" });
   }
   // "Go to pin" on an item row, and the marker menu's "Go to pin-drop
-  // location": this app's own install pin first (from the level index --
-  // no checklist read), else Delivery ITP's delivery pin, else say so.
-  function findInstallPinFor(levelName, roomName, joineryCode){
-    return readItemIndexFor(levelName).then(function(index){
-      var fileName = itpChecklistFileNameFor(levelName, roomName, joineryCode, state.projectIsFlat);
-      var e = index[indexKey(roomName, fileName)];
-      return (e && e.pin && typeof e.pin.x === "number") ? { x: e.pin.x, y: e.pin.y } : null;
-    }, function(){ return null; });
-  }
+  // location": the item's delivery pin as saved by UTZLINE Delivery ITP (the
+  // data the "Delivery locations" layer draws). Install ITP has no pin of
+  // its own (2026-09-25: "drop pin not required on the install itp. we will
+  // add that the delivery itp later").
   function goToPinFor(roomName, joineryCode){
     if (!currentLevelPlan){ showToast("This level has no floor plan."); return Promise.resolve(); }
     var levelName = state.levelName;
-    return findInstallPinFor(levelName, roomName, joineryCode).then(function(installPin){
-      if (installPin) return { kind: "install", pin: installPin };
-      return readDeliveryLocationPin(levelName, roomName, joineryCode).then(function(p){ return p ? { kind: "delivery", pin: p } : null; });
-    }).then(function(found){
-      if (!found){ showToast("No pin drop for " + joineryCode + " yet."); return; }
+    return readDeliveryLocationPin(levelName, roomName, joineryCode).then(function(pin){
+      if (!pin){ showToast("No pin drop for " + joineryCode + " yet (set in Delivery ITP)."); return; }
       return returnToFloorPlan(null).then(function(){
         requestAnimationFrame(function(){ requestAnimationFrame(function(){
-          if (found.kind === "delivery" && !installPlanLayers.deliveryLocations){
+          if (!installPlanLayers.deliveryLocations){
             installPlanLayers.deliveryLocations = true;
             deliveryLocationsLayerCheckbox.checked = true;
             renderDeliveryLocationsLayer(currentLevelPlan);
           }
-          centrePlanOn(found.pin.x, found.pin.y);
-          pulsePlanPoint(found.pin.x, found.pin.y, found.kind === "install" ? PLAN_MARKER_COMPLETE_COLOR : undefined);
-          showToast((found.kind === "install" ? "Install pin drop for " : "Delivery location for ") + joineryCode + ".");
+          centrePlanOn(pin.x, pin.y);
+          pulsePlanPoint(pin.x, pin.y);
+          showToast("Delivery location for " + joineryCode + ".");
         }); });
       });
     });
@@ -6137,7 +5994,7 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
   function showAfterSaveChoice(signedOff, pdfMade){
     document.getElementById("afterSaveTitle").textContent = checklistLocked && !pdfMade ? "Signed off (locked)." : (signedOff ? "Saved — signed off." : "Saved.");
     var d = state.currentData;
-    var notYet = (d && checklistOnlyMissingPinOrPhoto(d)) ? ("Not signed off yet — still " + missingForSignOffText(checklistProgress(d)) + ".") : "Not signed off yet — you can come back to it any time.";
+    var notYet = (d && checklistOnlyMissingPhoto(d)) ? "Not signed off yet — still needs a photo." : "Not signed off yet — you can come back to it any time.";
     document.getElementById("afterSaveHint").textContent = pdfMade ? "The ITP PDF has been created." : (signedOff ? "This ITP is complete and read only." : notYet);
     afterSaveBackdrop.hidden = false;
     return new Promise(function(resolve){ afterSaveResolve = resolve; });
@@ -6183,27 +6040,11 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     flushPendingSave().then(function(){
       endTimer();
       var data = state.currentData;
-      // Andrew (2026-09-25): "if the itp gets saved without it but everything
-      // else is complete, make the app request a pin drop then take you to
-      // the map (default to joinery location first) also tell the user to
-      // upload a photo". The save above has already landed, so nothing is
-      // lost whichever way they go from here.
-      if (data && checklistOnlyMissingPinOrPhoto(data)){
-        var needPin = !checklistHasInstallPin(data), needPhoto = !checklistHasPhoto(data);
-        if (needPin){
-          var msg = "Saved — " + state.currentJoineryNo + " is complete except for the pin drop." +
-            (needPhoto ? " It also needs a photo of the installed item." : "") +
-            "\n\nDrop the pin on the floor plan now? You'll be taken to the plan at this item's location — tap where it was installed.";
-          return genericConfirmLabelled(msg, "Drop the pin now", "Later").then(function(go){
-            if (go){
-              var target = { levelName: state.levelName, roomName: state.roomName, joineryCode: state.currentJoineryNo, fileName: state.currentFileHandle.name };
-              return enterPinDropMode(target);
-            }
-            return showAfterSaveChoice(false, false).then(goAfterSave);
-          });
-        }
-        // Pin present, photo missing: stay here so they can add one.
-        return genericAlert("Saved — " + state.currentJoineryNo + " is complete except for a photo.\n\nAdd a photo of the installed item, then Save & exit again to sign it off.").then(function(){
+      // A photo is required for sign-off (2026-09-25, see
+      // isChecklistSignedOff). Complete except the photo: the save above has
+      // already landed, so just say so and stay here to add one.
+      if (data && checklistOnlyMissingPhoto(data)){
+        return genericAlert("Saved \u2014 " + state.currentJoineryNo + " is complete except for a photo.\n\nAdd a photo of the installed item, then Save & exit again to sign it off.").then(function(){
           document.getElementById("addPhotoBtn").scrollIntoView({ block: "center" });
         });
       }
