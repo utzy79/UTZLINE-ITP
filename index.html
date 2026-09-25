@@ -346,6 +346,7 @@ textarea.notes-box{
 .rework-text{ margin:0 0 10px; white-space:pre-wrap; font-size:13px; }
 .rework-received-row{ display:flex; align-items:center; gap:8px; margin:10px 0; font-size:13px; flex-wrap:wrap; }
 .rework-received-row input[type="checkbox"]{ width:16px; height:16px; flex:none; }
+.rework-received-row input.rework-received-by{ flex:1 1 140px; min-width:120px; padding:6px 8px; border-radius:8px; border:1px solid var(--border, #444); background:var(--surface-2); color:var(--text); font-size:13px; }
 .rework-received-row input[type="date"]{
   margin-left:auto; font:inherit; font-size:13px; padding:6px 8px; border-radius:6px;
   border:1px solid var(--border-strong); background:var(--surface-0); color:var(--text-primary);
@@ -769,6 +770,11 @@ body.plan-fullscreen .plan-viewport{
          the plan's marker menu now). -->
     <div class="actions-row">
       <button class="mbtn mbtn-accent" id="saveChecklistBtn">Save &amp; exit</button>
+      <!-- Andrew (2026-09-25): "itp page needs a cancel / return to floor
+           plan option" -- leaves for the plan; an unsaved edit gets the
+           same Save & leave / Leave without saving / Cancel dialog the
+           Back link uses. -->
+      <button class="mbtn" id="returnToPlanBtn">Cancel / return to floor plan</button>
       <button class="mbtn" id="viewJobNoteBtn">View job note</button>
     </div>
   </div>
@@ -3752,6 +3758,7 @@ body.plan-fullscreen .plan-viewport{
         row.innerHTML = '<div class="row-main"><div class="row-title"></div></div>';
         row.querySelector(".row-title").textContent = name;
         row.addEventListener("click", function(){ openRoom(name); });
+        attachRowLongPress(row, function(){ showOnPlan(name, ""); }); // long press: show this room on the floor plan
         roomListEl.appendChild(row);
       });
     });
@@ -3906,11 +3913,11 @@ body.plan-fullscreen .plan-viewport{
     planView.ty = vh / 2 - wy * planView.scale;
     applyPlanView();
   }
-  function pulsePlanPoint(wx, wy){
+  function pulsePlanPoint(wx, wy, colour){
     var ns = "http://www.w3.org/2000/svg";
     var ring = document.createElementNS(ns, "circle");
     ring.setAttribute("cx", wx); ring.setAttribute("cy", wy); ring.setAttribute("r", 30);
-    ring.setAttribute("fill", "none"); ring.setAttribute("stroke", deliveryPinAccentColor()); ring.setAttribute("stroke-width", "6");
+    ring.setAttribute("fill", "none"); ring.setAttribute("stroke", colour || deliveryPinAccentColor()); ring.setAttribute("stroke-width", "6");
     ring.setAttribute("class", "plan-pulse-ring");
     ring.style.pointerEvents = "none";
     levelPlanWorldG.appendChild(ring);
@@ -4137,6 +4144,7 @@ body.plan-fullscreen .plan-viewport{
     row.querySelector(".row-sub").textContent = sub;
     row.querySelector(".row-chip").textContent = chipText;
     row.addEventListener("click", function(){ openItem(fileName, joineryNo); });
+    if (!isArtifact) attachRowLongPress(row, function(){ showOnPlan(state.roomName, joineryNo); }); // long press: show this item (and its pin-drop) on the plan
     return row;
   }
   // Builds one Items-list row. `index` (from readItemIndex(), or null/
@@ -4275,6 +4283,7 @@ body.plan-fullscreen .plan-viewport{
     row.querySelector(".row-sub").textContent = sub;
     row.querySelector(".row-chip").textContent = chipText;
     row.addEventListener("click", function(){ openItem(fileName, joineryId); });
+    attachRowLongPress(row, function(){ showOnPlan(state.roomName, joineryId); }); // long press: show this item (and its pin-drop) on the plan
     return row;
   }
   // Same cache-first/parallel/batched-backfill shape as buildItemRow above,
@@ -4598,6 +4607,7 @@ body.plan-fullscreen .plan-viewport{
       photos: reworkFormPhotos,
       received: false,
       receivedDate: null,
+      receivedBy: "",   // Andrew (2026-09-25): "when a rework is returned to site, it needs a received by option"
       createdAt: new Date().toISOString(),
       createdBy: deviceUserName || ""
     };
@@ -4669,20 +4679,39 @@ body.plan-fullscreen .plan-viewport{
       dateInput.type = "date";
       dateInput.value = entry.receivedDate || "";
       dateInput.disabled = !entry.received;
+      // "Received by" (2026-09-25): pre-filled with whoever is signed in on
+      // this device the moment the box is ticked, editable in case someone
+      // else took the delivery. Saved on the entry and printed on the
+      // rework PDF's RECEIVED tag.
+      var byLabel = document.createElement("span");
+      byLabel.textContent = "by";
+      var byInput = document.createElement("input");
+      byInput.type = "text"; byInput.className = "rework-received-by"; byInput.placeholder = "Received by";
+      byInput.value = entry.receivedBy || "";
+      byInput.disabled = !entry.received;
       cb.addEventListener("change", function(){
         entry.received = cb.checked;
         if (entry.received && !entry.receivedDate){
           entry.receivedDate = new Date().toISOString().slice(0, 10);
           dateInput.value = entry.receivedDate;
         }
+        if (entry.received && !entry.receivedBy && deviceUserName){
+          entry.receivedBy = deviceUserName;
+          byInput.value = deviceUserName;
+        }
         dateInput.disabled = !entry.received;
+        byInput.disabled = !entry.received;
         writeReworkFile();
       });
       dateInput.addEventListener("change", function(){
         entry.receivedDate = dateInput.value || null;
         writeReworkFile();
       });
-      recRow.appendChild(cb); recRow.appendChild(span); recRow.appendChild(dateInput);
+      byInput.addEventListener("change", function(){
+        entry.receivedBy = byInput.value.trim();
+        writeReworkFile();
+      });
+      recRow.appendChild(cb); recRow.appendChild(span); recRow.appendChild(dateInput); recRow.appendChild(byLabel); recRow.appendChild(byInput);
       card.appendChild(recRow);
 
       var actions = document.createElement("div");
@@ -4797,7 +4826,7 @@ body.plan-fullscreen .plan-viewport{
       var textLines = entry.text ? wrapText(doc, entry.text, contentW - 24) : [];
       var statusReceived = !!entry.received;
       var statusText = statusReceived
-        ? "RECEIVED" + (entry.receivedDate ? " — " + entry.receivedDate : "")
+        ? "RECEIVED" + (entry.receivedDate ? " — " + entry.receivedDate : "") + (entry.receivedBy ? " — by " + entry.receivedBy : "")
         : "REWORK PENDING";
 
       // Photo thumbnails, up to 3 per row, inside this entry's own card.
@@ -5511,6 +5540,94 @@ body.plan-fullscreen .plan-viewport{
     });
   }
 
+  /* ---- Return to floor plan / show on plan (2026-09-25) ----
+     returnToFloorPlan(focus): back to the current level's plan, from
+     memory when it's already loaded (no re-read), otherwise via openLevel
+     (which lands on the room list for a level with no plan). `focus`
+     ({roomName, joineryCode?}) centres and pulses that item's marker (or
+     all of a room's markers) and, when Delivery ITP has a pin-drop saved
+     for the item, shows that too and frames both. Used by the after-save
+     choice, the checklist's "Return to floor plan" button, and a long
+     press on a room or item row (Andrew: "long press on a room or joinery
+     item in the menu, takes you to that joinery item, if there is a pin
+     drop for that item, it brings that up on the button also"). */
+  function returnToFloorPlan(focus){
+    var levelName = state.levelName;
+    if (!currentLevelPlan) return openLevel(levelName);
+    state.currentJoineryNo = "";
+    updateCrumbs();
+    return renderLevelPlanScreen(currentLevelPlan).then(function(){
+      showScreen("LevelPlan");
+      if (focus) requestAnimationFrame(function(){ requestAnimationFrame(function(){ focusPlanOn(focus); }); }); // after renderLevelPlanScreen's own queued fitPlanView
+    });
+  }
+  function focusPlanOn(focus){
+    if (!currentLevelPlan || state.levelName !== (focus.levelName || state.levelName)) return;
+    var markers = currentLevelPlan.roomlinks.filter(function(o){
+      return o.roomName === focus.roomName && (!focus.joineryCode || (o.joineryCode || "") === focus.joineryCode);
+    });
+    if (!markers.length){ showToast((focus.joineryCode || focus.roomName) + " isn't marked on this level's plan."); return; }
+    var pts = markers.map(function(o){ return { x: o.x, y: o.y }; });
+    function frame(){
+      framePlanPoints(pts);
+      markers.forEach(function(o){ pulsePlanPoint(o.x, o.y, PLAN_MARKER_STARTED_COLOR); });
+    }
+    frame();
+    if (!focus.joineryCode) return;
+    readDeliveryLocationPin(state.levelName, focus.roomName, focus.joineryCode).then(function(pin){
+      if (!pin || !currentLevelPlan || !document.getElementById("screenLevelPlan").classList.contains("active")) return;
+      if (!installPlanLayers.deliveryLocations){
+        installPlanLayers.deliveryLocations = true;
+        deliveryLocationsLayerCheckbox.checked = true;
+        renderDeliveryLocationsLayer(currentLevelPlan);
+      }
+      pts.push(pin);
+      frame();
+      pulsePlanPoint(pin.x, pin.y);
+    });
+  }
+  // Frame a set of world points: one point -> centrePlanOn; several ->
+  // zoom so they all fit with padding, centred on their midpoint.
+  function framePlanPoints(pts){
+    if (pts.length === 1){ centrePlanOn(pts[0].x, pts[0].y); return; }
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    pts.forEach(function(p){ minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); });
+    var rect = planViewportEl.getBoundingClientRect();
+    var vw = rect.width || 300, vh = rect.height || 300;
+    var pad = 160;
+    var fitScale = Math.min(vw / currentLevelPlan.imageW, vh / currentLevelPlan.imageH) * 0.94;
+    var scale = clampPlanScale(Math.min(vw / (maxX - minX + pad * 2), vh / (maxY - minY + pad * 2), fitScale * 4));
+    planView.scale = Math.max(scale, fitScale);
+    planView.tx = vw / 2 - ((minX + maxX) / 2) * planView.scale;
+    planView.ty = vh / 2 - ((minY + maxY) / 2) * planView.scale;
+    applyPlanView();
+  }
+  // Long press (or right-click) on a list row -- see attachRowLongPress.
+  function showOnPlan(roomName, joineryCode){
+    if (!currentLevelPlan){ showToast("This level has no floor plan."); return Promise.resolve(); }
+    return returnToFloorPlan({ roomName: roomName, joineryCode: joineryCode || "" });
+  }
+  // Generic long-press for list rows: fires `fn` after LONG_PRESS_MS with
+  // no movement, and swallows the click that follows so the row's normal
+  // tap action doesn't also run. A real right-click does the same.
+  function attachRowLongPress(row, fn){
+    var timer = null, startX = 0, startY = 0, fired = false;
+    function clear(){ if (timer){ clearTimeout(timer); timer = null; } }
+    row.addEventListener("pointerdown", function(e){
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      fired = false; startX = e.clientX; startY = e.clientY; clear();
+      timer = setTimeout(function(){ fired = true; timer = null; fn(); }, LONG_PRESS_MS);
+    });
+    row.addEventListener("pointermove", function(e){
+      if (timer && (Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY)) > 8) clear();
+    });
+    row.addEventListener("pointerup", clear);
+    row.addEventListener("pointercancel", clear);
+    row.addEventListener("pointerleave", clear);
+    row.addEventListener("click", function(e){ if (fired){ fired = false; e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+    row.addEventListener("contextmenu", function(e){ e.preventDefault(); clear(); fired = true; fn(); });
+  }
+
   /* ---- Save & exit (2026-09-25) ----
      Andrew: "save on the itp should be save and exit, no need for export
      pdf or delete this item buttons, if an itp is complete and saved, it
@@ -5541,12 +5658,7 @@ body.plan-fullscreen .plan-viewport{
   // No backdrop-tap dismiss and no cancel: the save has already happened,
   // and the checklist is being left -- "room" is the neutral default.
   function goAfterSave(choice){
-    if (choice === "plan"){
-      var levelName = state.levelName;
-      // Same path as tapping the level from the Levels list -- lands on the
-      // plan (or the room list for a level with no plan).
-      return openLevel(levelName);
-    }
+    if (choice === "plan") return returnToFloorPlan(null);
     if (choice === "start"){
       return populateProjectList().then(function(){ showScreen("Projects"); });
     }
@@ -5554,6 +5666,14 @@ body.plan-fullscreen .plan-viewport{
     showScreen("Items");
     return populateItemList().then(function(){ itemListEl.classList.remove("refreshing"); }, function(){ itemListEl.classList.remove("refreshing"); });
   }
+  document.getElementById("returnToPlanBtn").addEventListener("click", function(){
+    if (!dirty || checklistLocked){ dirty = false; returnToFloorPlan(null); return; }
+    showLeaveConfirm().then(function(choice){
+      if (choice === "cancel") return;
+      if (choice === "discard"){ dirty = false; return returnToFloorPlan(null); }
+      return flushPendingSave().then(function(){ return returnToFloorPlan(null); });
+    });
+  });
   document.getElementById("saveChecklistBtn").addEventListener("click", function(){
     if (checklistLocked){
       // Read-only: nothing to save -- straight to the where-to-next choice.

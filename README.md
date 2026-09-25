@@ -1,6 +1,14 @@
 # UTZLINE Install ITP — installable app
 
-**Current version: v31** (its own independent version line, separate from Site Measure/Viewer's — bump this line, and add a dated entry below, every time a new build ships. See `next-version-notes.md` in the project for the full per-version changelog if a gap ever needs filling in.)
+**Current version: v32** (its own independent version line, separate from Site Measure/Viewer's — bump this line, and add a dated entry below, every time a new build ships. See `next-version-notes.md` in the project for the full per-version changelog if a gap ever needs filling in.)
+
+**v32 (2026-09-25):** three more from Andrew, straight after v31:
+
+- **Long press a room or item row → show it on the floor plan.** "long press on a room or joinery item in the menu, takes you to that joinery item, if there is a pin drop for that item, it brings that up on the button also." A long press (or right-click) on a row in the Rooms list or the Items list jumps to the level's floor plan, centred on that room's marker(s) or that item's marker, and pulses it. For an item with a Delivery ITP pin-drop saved, the delivery-locations layer is switched on and the view is framed so both the marker and the pin are visible, both pulsing. A plain tap on a row still opens the room / checklist as before (the tap after a long press is swallowed). Rooms or items not marked on the plan get a toast. Plumbing: `attachRowLongPress`, `showOnPlan`, `returnToFloorPlan(focus)`, `focusPlanOn`, `framePlanPoints`.
+- **Checklist: "Cancel / return to floor plan".** "itp page needs a cancel / return to floor plan option." New button beside Save & exit. With nothing unsaved (or on a locked sheet) it goes straight to the plan, re-rendered from memory; with an unsaved edit it shows the same Save & leave / Leave without saving / Cancel dialog the Back link uses. The after-save "Return to floor plan" choice now uses the same in-memory path (no level re-read).
+- **Rework "Received by".** "when a rework is returned to site, it needs a received by option." Ticking "Received back on site" now also fills a *Received by* field with whoever is signed in on this device, editable; stored as `receivedBy` on the rework entry and printed on the rework PDF's tag ("RECEIVED — 2026-09-25 — by D. Foreman").
+
+Tests: `run_room_list_alpha_and_marker_menu.js` extended (room long-press centres its marker with the room not opened; item long-press shows marker + pin framed on their midpoint with the checklist not opened; return-to-plan clean and dirty/discard paths). `run_rework_tracker.js` gained the Received-by checks (both project shapes). Full suite green (10 + 9). `service-worker.js` cache → `utzline-itp-cache-v32`.
 
 **v31 (2026-09-25):** workflow changes from Andrew, all on the same day as the v26–v30 performance rounds:
 
