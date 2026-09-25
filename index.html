@@ -2442,6 +2442,16 @@ body.plan-fullscreen .plan-viewport{
   function checklistHasNoAnswer(data){
     return !!(data && Array.isArray(data.rows) && data.rows.some(function(r){ return r && r.status === "no"; }));
   }
+  // Same "signed off" definition computeItemItpStatus below already uses
+  // for this item's own marker/summary badge (both signatures present, no
+  // row flagged "No") -- factored out here (2026-09-24) so flushPendingSave's
+  // new auto-export-on-sign-off hook (see its own comment) can share it
+  // rather than duplicating the formula a third time.
+  function isChecklistSignedOff(data){
+    return !!(data && data.signoff &&
+      data.signoff.installer && data.signoff.installer.sig &&
+      data.signoff.supervisor && data.signoff.supervisor.sig) && !checklistHasNoAnswer(data);
+  }
   // Status for a single joinery item's own marker -- complete only once
   // THAT item's own checklist file has both sign-off signatures AND no row
   // is flagged "No"; not started yet (no file), partially filled, or
@@ -3376,12 +3386,36 @@ body.plan-fullscreen .plan-viewport{
      one.
        FLAT project:   Project Saves/UTZLINE ITP/Install ITP Rework/<Level> - <Room> - <Code>.json
        LEGACY project: itp-install-rework/<Level>/<Room>/<Code>.json
-     No PDF export for rework (not asked for, and there's no paper-template
-     precedent to match the way the checklist has one) -- just in-app
-     tracking here plus a read-only summary in UTZLINE Projects. */
+     UPDATE (2026-09-24, Round 2 of the Joinery Item page overhaul) --
+     Andrew, verbatim: "the rework section can open the rework pdf to
+     view. any rework images for this joinery item get attached to that
+     rework pdf. the top of the pdf matches the itp layout and details,
+     but with red highlights." Every writeReworkFile() now also
+     regenerates ONE cumulative PDF for this item (exportReworkPdf,
+     defined right after renderReworkList below) covering every entry
+     still on file, in the exact same newest-first order as this screen's
+     own history list -- there's no "signed off" concept for rework the
+     way the checklist has one, so unlike that auto-export (which keeps
+     every distinct signed-off state as its own timestamped file), this
+     PDF is a single, always-current snapshot: same fixed filename every
+     time, deliberately overwritten rather than accumulating a new file
+     per edit. Stored in its own sibling PDF Files/UTZLINE ITP/Install ITP
+     Rework/ branch (flat) or right alongside the JSON in
+     itp-install-rework/<Level>/<Room>/ (legacy) -- the exact same
+     per-shape split the checklist's own PDF already uses (see
+     ensureItpRoomFolder's own comment). Deleted automatically the moment
+     the last rework entry for this item is removed, so UTZLINE Projects
+     never links to a stale or empty PDF. */
   function getReworkDirFlat(projectHandle, create){
     return projectHandle.getDirectoryHandle("Project Saves", { create: !!create }).then(function(psH){
       return psH.getDirectoryHandle("UTZLINE ITP", { create: !!create });
+    }).then(function(branchH){
+      return branchH.getDirectoryHandle("Install ITP Rework", { create: !!create });
+    });
+  }
+  function getReworkPdfDirFlat(projectHandle, create){
+    return projectHandle.getDirectoryHandle("PDF Files", { create: !!create }).then(function(pfH){
+      return pfH.getDirectoryHandle("UTZLINE ITP", { create: !!create });
     }).then(function(branchH){
       return branchH.getDirectoryHandle("Install ITP Rework", { create: !!create });
     });
@@ -3393,18 +3427,55 @@ body.plan-fullscreen .plan-viewport{
       return levelH.getDirectoryHandle(roomName, { create: true });
     });
   }
+  // Resolves to {dataHandle, pdfHandle} -- flat gets its own dedicated PDF
+  // Files/ branch (create:true, cheap once created); legacy reuses the
+  // SAME itp-install-rework/<Level>/<Room>/ folder for both, exactly like
+  // ensureItpRoomFolder does for the checklist's own JSON+PDF pair.
   function ensureReworkFolder(){
-    return state.projectIsFlat
-      ? getReworkDirFlat(state.projectHandle, true)
-      : ensureReworkRoomFolderLegacy(state.levelName, state.roomName);
+    if (state.projectIsFlat){
+      return Promise.all([
+        getReworkDirFlat(state.projectHandle, true),
+        getReworkPdfDirFlat(state.projectHandle, true)
+      ]).then(function(results){
+        return { dataHandle: results[0], pdfHandle: results[1] };
+      });
+    }
+    return ensureReworkRoomFolderLegacy(state.levelName, state.roomName).then(function(roomH){
+      return { dataHandle: roomH, pdfHandle: roomH };
+    });
   }
   function reworkFileNameFor(joineryCode){
     return itpChecklistFileNameFor(state.levelName, state.roomName, joineryCode, state.projectIsFlat);
   }
+  // No timestamp -- unlike the checklist's own PDF (a new file per
+  // signed-off state), this is the one always-current rework PDF for this
+  // item, deliberately overwritten on every change. Same base name as the
+  // checklist's own PDF (itpPdfBaseNameFor) so it's trivially
+  // predictable/discoverable from UTZLINE Projects.
+  function reworkPdfFileNameFor(joineryCode){
+    return itpPdfBaseNameFor(state.levelName, state.roomName, joineryCode, state.projectIsFlat) + ".pdf";
+  }
   function blankReworkFile(joineryCode){
     return { schemaVersion: 1, joineryNo: joineryCode, reworks: [] };
   }
-  var reworkState = { dirHandle: null, joineryCode: "", data: null };
+  var reworkState = { dirHandle: null, pdfDirHandle: null, joineryCode: "", data: null };
+  // After every successful JSON write, keeps the one cumulative rework PDF
+  // for this item in sync: regenerates it if any entries remain, or
+  // removes a stale one if the last entry was just deleted. Chained off
+  // writeReworkFile()'s own promise (not fire-and-forget) so a caller's
+  // own .then() (e.g. the "Rework entry added." toast) never fires before
+  // the PDF is actually up to date -- same reasoning as the checklist's
+  // own chained auto-export.
+  function syncReworkPdf(){
+    if (!reworkState.pdfDirHandle || !reworkState.data) return Promise.resolve();
+    var fileName = reworkPdfFileNameFor(reworkState.joineryCode);
+    if (!reworkState.data.reworks.length){
+      return reworkState.pdfDirHandle.removeEntry(fileName).catch(function(){ /* nothing to remove -- fine */ });
+    }
+    return exportReworkPdf().catch(function(err){
+      console.error("Rework PDF export failed:", err);
+    });
+  }
   function writeReworkFile(){
     if (!reworkState.dirHandle || !reworkState.data) return Promise.resolve();
     reworkState.data.updatedAt = new Date().toISOString();
@@ -3413,6 +3484,8 @@ body.plan-fullscreen .plan-viewport{
       return fh.createWritable();
     }).then(function(w){
       return w.write(payload).then(function(){ return w.close(); });
+    }).then(function(){
+      return syncReworkPdf();
     }).catch(function(err){
       console.error("Save rework entry failed:", err);
       showToast("Couldn't save that rework change — try again.");
@@ -3421,9 +3494,10 @@ body.plan-fullscreen .plan-viewport{
   function openRework(joineryCode){
     state.currentJoineryNo = joineryCode;
     updateCrumbs();
-    return ensureReworkFolder().then(function(dirH){
-      reworkState.dirHandle = dirH;
-      return dirH.getFileHandle(reworkFileNameFor(joineryCode), { create: true });
+    return ensureReworkFolder().then(function(handles){
+      reworkState.dirHandle = handles.dataHandle;
+      reworkState.pdfDirHandle = handles.pdfHandle;
+      return handles.dataHandle.getFileHandle(reworkFileNameFor(joineryCode), { create: true });
     }).then(function(fh){ return fh.getFile(); }).then(function(file){ return file.text(); }).then(function(text){
       var data = null;
       try{ data = JSON.parse(text); }catch(e){ data = null; }
@@ -3607,6 +3681,208 @@ body.plan-fullscreen .plan-viewport{
       card.appendChild(actions);
 
       reworkListEl.appendChild(card);
+    });
+  }
+
+  /* ---- rework PDF export (2026-09-24) -- Andrew: "the rework section can
+     open the rework pdf to view. any rework images for this joinery item
+     get attached to that rework pdf. the top of the pdf matches the itp
+     layout and details, but with red highlights." Deliberately NOT a
+     line-by-line copy-paste of exportChecklistPdf -- shares its general
+     shape (same top-of-page logos, same PROJECT/LEVEL/ROOM/JOINERY field
+     block) but the accent color is red throughout the header (title text,
+     both dividers) instead of black, precisely the "same layout... but
+     with red highlights" Andrew asked for -- a rework page should read as
+     visibly different from an ordinary checklist page at a glance, even
+     stapled together in the same folder. Below the header, one card per
+     rework entry (newest first, same order as this screen's own history
+     list): a still-outstanding entry gets a red-bordered card with a red
+     "REWORK PENDING" tag, a received one gets a plain gray card with a
+     green "RECEIVED" tag -- the same at-a-glance red/green signal Andrew's
+     own on-screen "Received back on site" checkbox already gives, just
+     carried through to paper. Every entry's own photos are drawn inline
+     inside its own card (small thumbnail row, date/name-stamped via the
+     same formatPdfImageStamp the checklist's own trailing photo pages
+     use) rather than collected into one trailing grid, since here each
+     photo belongs to one specific entry, not the item as a whole. */
+  function exportReworkPdf(){
+    if (!window.jspdf || !window.jspdf.jsPDF) return Promise.resolve();
+    var data = reworkState.data;
+    if (!data || !data.reworks || !data.reworks.length) return Promise.resolve();
+    var joineryCode = reworkState.joineryCode;
+    var doc = new window.jspdf.jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true });
+    var pageW = doc.internal.pageSize.getWidth();
+    var pageH = doc.internal.pageSize.getHeight();
+    var margin = 36;
+    var contentW = pageW - margin * 2;
+    var RED = [190, 30, 24];
+
+    var companyLogoW = 0, companyLogoH = 0;
+    if (state.companyLogoDataUrl && state.companyLogoW > 0 && state.companyLogoH > 0){
+      var maxLogoW = 180, maxLogoH = 92;
+      var logoScale = Math.min(maxLogoW / state.companyLogoW, maxLogoH / state.companyLogoH, 1);
+      companyLogoW = state.companyLogoW * logoScale;
+      companyLogoH = state.companyLogoH * logoScale;
+    }
+    var utzLogoSize = 48;
+    var topBandH = Math.max(companyLogoH, utzLogoSize);
+    var topContentY = margin + topBandH + 14;
+    var y = topContentY;
+
+    doc.setFont("helvetica", "bold").setFontSize(15);
+    doc.setTextColor.apply(doc, RED);
+    doc.text("JOINERY REWORK LOG", margin, y);
+    doc.setTextColor(20);
+    y += 10;
+    doc.setDrawColor.apply(doc, RED); doc.setLineWidth(1.4);
+    doc.line(margin, y, pageW - margin, y);
+    y += 16;
+
+    var meta = state.projectMeta || {};
+    var fields = [
+      ["Project No.", meta.no || "—"], ["Project", meta.name || state.projectName],
+      ["Head Contractor / Builder", meta.contractor || "—"], ["Level", state.levelName],
+      ["Area / Room", state.roomName], ["Joinery No.", joineryCode]
+    ];
+    doc.setFontSize(9.5);
+    var colW = contentW / 2;
+    fields.forEach(function(f, i){
+      var col = i % 2, row = Math.floor(i / 2);
+      var fx = margin + col * colW;
+      var fy = y + row * 28;
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(90);
+      doc.text(f[0].toUpperCase(), fx, fy);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(20);
+      doc.text(String(f[1]), fx, fy + 13);
+    });
+    y += Math.ceil(fields.length / 2) * 28 + 10;
+    doc.setDrawColor.apply(doc, RED); doc.setLineWidth(1.4);
+    doc.line(margin, y, pageW - margin, y);
+    doc.setLineWidth(1);
+    y += 20;
+
+    function ensureSpace(needed){
+      if (y + needed > pageH - 40){
+        doc.addPage();
+        y = topContentY;
+      }
+    }
+
+    data.reworks.forEach(function(entry){
+      var cabinetText = entry.cabinetNumber ? ("Cabinet " + entry.cabinetNumber) : "No cabinet number";
+      var createdText = formatPdfImageStamp(entry.createdAt, entry.createdBy) || "—";
+      var textLines = entry.text ? wrapText(doc, entry.text, contentW - 24) : [];
+      var statusReceived = !!entry.received;
+      var statusText = statusReceived
+        ? "RECEIVED" + (entry.receivedDate ? " — " + entry.receivedDate : "")
+        : "REWORK PENDING";
+
+      // Photo thumbnails, up to 3 per row, inside this entry's own card.
+      var PHOTO_SIZE = 74, PHOTO_GAP = 8, PHOTO_CAPTION_H = 11;
+      var photos = entry.photos || [];
+      var photoCols = photos.length ? Math.min(3, photos.length) : 0;
+      var photoRows = photoCols ? Math.ceil(photos.length / photoCols) : 0;
+      var photosH = photoRows ? photoRows * (PHOTO_SIZE + PHOTO_CAPTION_H + PHOTO_GAP) : 0;
+
+      var cardPad = 10;
+      var headH = 16, statusH = 14;
+      var textH = textLines.length ? textLines.length * 11 + 6 : 0;
+      var cardH = cardPad * 2 + headH + statusH + textH + photosH;
+
+      ensureSpace(cardH + 14);
+
+      // Card border: red for pending (the visual flag Andrew asked for),
+      // plain gray once received -- outstanding work should stand out,
+      // resolved work shouldn't keep drawing the eye.
+      doc.setDrawColor.apply(doc, statusReceived ? [180, 180, 180] : RED);
+      doc.setLineWidth(statusReceived ? 0.75 : 1.3);
+      doc.rect(margin, y, contentW, cardH);
+      doc.setLineWidth(1);
+
+      var cy = y + cardPad;
+      doc.setFont("helvetica", "bold").setFontSize(11).setTextColor(20);
+      doc.text(cabinetText, margin + cardPad, cy + 10);
+      doc.setFont("helvetica", "normal").setFontSize(8.5).setTextColor(110);
+      doc.text(createdText, pageW - margin - cardPad, cy + 10, { align: "right" });
+      cy += headH;
+
+      // Status tag -- small filled pill, same red/green convention as the
+      // rest of this app's own tri-button colors.
+      doc.setFont("helvetica", "bold").setFontSize(8);
+      if (statusReceived){
+        doc.setFillColor(217, 242, 227); doc.setTextColor(31, 120, 70);
+      } else {
+        doc.setFillColor(251, 221, 212); doc.setTextColor.apply(doc, RED);
+      }
+      var tagW = doc.getTextWidth(statusText) + 14;
+      doc.roundedRect(margin + cardPad, cy, tagW, statusH, 3, 3, "F");
+      doc.text(statusText, margin + cardPad + 7, cy + 10);
+      doc.setTextColor(20);
+      cy += statusH + 6;
+
+      if (textLines.length){
+        doc.setFont("helvetica", "normal").setFontSize(9).setTextColor(20);
+        doc.text(textLines, margin + cardPad, cy + 8);
+        cy += textH;
+      }
+
+      if (photos.length){
+        var px = margin + cardPad, prow = 0, pcol = 0;
+        photos.forEach(function(photo, idx){
+          pcol = idx % photoCols;
+          prow = Math.floor(idx / photoCols);
+          var ix = margin + cardPad + pcol * (PHOTO_SIZE + PHOTO_GAP);
+          var iy = cy + prow * (PHOTO_SIZE + PHOTO_CAPTION_H + PHOTO_GAP);
+          var pw = photo.w || 1, ph = photo.h || 1;
+          var scale = Math.min(PHOTO_SIZE / pw, PHOTO_SIZE / ph);
+          var iw = pw * scale, ih = ph * scale;
+          var ox = ix + (PHOTO_SIZE - iw) / 2, oy = iy + (PHOTO_SIZE - ih) / 2;
+          try{
+            doc.addImage(photo.dataUrl, "JPEG", ox, oy, iw, ih, undefined, "FAST");
+            doc.setDrawColor(190).setLineWidth(0.75).rect(ox, oy, iw, ih);
+          }catch(e){ console.error("Rework photo failed to draw in PDF:", e); }
+          var stampText = formatPdfImageStamp(photo.addedAt, photo.addedBy);
+          if (stampText){
+            doc.setFont("helvetica", "normal").setFontSize(6.5).setTextColor(110);
+            doc.text(stampText, ix + PHOTO_SIZE / 2, iy + PHOTO_SIZE + 8, { align: "center", maxWidth: PHOTO_SIZE });
+            doc.setTextColor(20);
+          }
+        });
+        cy += photosH;
+      }
+
+      y += cardH + 14;
+    });
+
+    doc.setFont("helvetica", "normal").setFontSize(7).setTextColor(140);
+    doc.text("Generated by UTZLINE Install ITP — " + new Date().toLocaleString(), margin, pageH - 16);
+
+    (function stampLogosOnEveryPage(){
+      var totalPages = doc.internal.getNumberOfPages();
+      var originalPage = doc.internal.getCurrentPageInfo().pageNumber;
+      for (var p = 1; p <= totalPages; p++){
+        doc.setPage(p);
+        var thisPageW = doc.internal.pageSize.getWidth();
+        if (companyLogoW > 0 && companyLogoH > 0){
+          try{
+            doc.addImage(state.companyLogoDataUrl, "PNG", margin, margin, companyLogoW, companyLogoH, undefined, "FAST");
+          }catch(e){ console.error("Company logo failed to draw in PDF:", e); }
+        }
+        try{
+          doc.addImage(UTZLINE_ITP_LOGO_DATA_URL, "PNG", thisPageW - margin - utzLogoSize, margin, utzLogoSize, utzLogoSize, undefined, "FAST");
+        }catch(e){ console.error("UTZLINE ITP logo failed to draw in PDF:", e); }
+      }
+      doc.setPage(originalPage);
+    })();
+
+    var fileName = reworkPdfFileNameFor(joineryCode);
+    var blob = doc.output("blob");
+    return reworkState.pdfDirHandle.getFileHandle(fileName, { create: true }).then(function(fh){
+      return fh.createWritable();
+    }).then(function(w){
+      return w.write(blob).then(function(){ return w.close(); });
     });
   }
 
@@ -3878,6 +4154,26 @@ body.plan-fullscreen .plan-viewport{
       // syncJoineryStatusFromChecklist's own comment) -- never blocks the
       // save itself finishing on this extra write.
       syncJoineryStatusFromChecklist(savedData, savedLevel, savedRoom, savedJoinery);
+      // Auto-export a PDF the moment this checklist reaches "Signed off",
+      // and again on every later edit made while it's still signed off --
+      // Andrew, confirmed via a direct question during the 2026-09-24
+      // Joinery Item page overhaul, choosing this over "export on every
+      // save" specifically to keep the PDF folder from filling up with
+      // mid-progress exports. Reuses the exact same exportChecklistPdf()
+      // the manual "Export PDF" button already calls, so an auto-exported
+      // file lands in the identical folder/timestamped-filename convention.
+      // UNLIKE the fire-and-forget sync above, this IS returned/chained --
+      // exportChecklistPdf() reads live state.* rather than the savedData
+      // snapshot, and openItem() (the only place state.currentData is ever
+      // reassigned) already starts with flushPendingSave().then(...), so
+      // chaining this here is what keeps that guarantee true: nothing can
+      // swap the active checklist out from under this export before it
+      // finishes writing.
+      if (isChecklistSignedOff(savedData)){
+        return exportChecklistPdf().catch(function(err){
+          console.error("Auto-export on sign-off failed:", err);
+        });
+      }
     }).catch(function(err){
       console.error("Autosave failed:", err);
     });
