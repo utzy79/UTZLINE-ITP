@@ -477,6 +477,72 @@ body.plan-fullscreen .plan-viewport{
   background:var(--surface-0); color:var(--text-primary);
 }
 .modal-actions{ display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+
+/* ---- photo source chooser + in-page camera capture (2026-09-25) ----
+   Added after Andrew reported the app "crashed when taking a photo" --
+   same root cause Site Measure's own v37 fix (2026-09-19) diagnosed and
+   fixed: photoFileInput's capture="environment" attribute hands the shot
+   straight to Android's native Camera app as a separate foreground
+   activity, backgrounding this tab -- and on a memory-constrained onsite
+   tablet, Android can and does simply kill that backgrounded tab outright.
+   When the camera hands control back, Android does a full fresh page load,
+   and the File System Access folder permission this app needs to keep
+   saving is NOT persisted across a reload like that on Android -- so the
+   app lands back on "choose your Projects folder", which is exactly what
+   reads as a crash mid-checklist. Ported verbatim from Site Measure's fix:
+   an in-page camera capture (getUserMedia + <video> + a canvas snapshot)
+   that never leaves this tab at all, offered as "Take photo" alongside the
+   existing OS picker ("Choose file", now unforced -- just for an existing
+   photo from the gallery). Shared by BOTH photo-add flows in this app --
+   the checklist's own "Add photo" and the rework tracker's "Add photo".
+   See openCameraCapture()'s own comment below. */
+.share-choice-box{ max-width:340px; }
+.share-choice-options{ display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
+.share-choice-opt{
+  display:flex; flex-direction:column; gap:2px; text-align:left;
+  padding:10px 12px; border-radius:8px; border:1px solid var(--border-strong);
+  background:var(--surface-2); cursor:pointer; font:inherit; color:inherit;
+}
+.share-choice-opt:hover, .share-choice-opt:focus-visible{ background:var(--surface-0); }
+.share-choice-title{ font-size:13.5px; font-weight:600; }
+.share-choice-sub{ font-size:11.5px; color:var(--text-secondary); line-height:1.35; }
+
+.camera-backdrop{
+  position:fixed; inset:0; z-index:70; background:#000;
+  display:flex; flex-direction:column;
+}
+.camera-backdrop[hidden]{ display:none; }
+.camera-stage{
+  flex:1; min-height:0; position:relative; overflow:hidden;
+  background:#000; display:flex; align-items:center; justify-content:center;
+}
+.camera-stage video, .camera-stage canvas{ max-width:100%; max-height:100%; display:block; }
+.camera-stage canvas[hidden], .camera-stage video[hidden]{ display:none; }
+.camera-hint{
+  position:absolute; top:0; left:0; right:0; padding:10px 14px;
+  font-size:12.5px; color:#fff; text-align:center; text-shadow:0 1px 3px rgba(0,0,0,.6);
+  background:linear-gradient(rgba(0,0,0,.45), rgba(0,0,0,0));
+}
+.camera-controls{
+  flex:none; display:flex; align-items:center; justify-content:space-between;
+  gap:14px; padding:16px 20px calc(16px + env(safe-area-inset-bottom, 0px));
+}
+.camera-side-btn{
+  background:none; border:none; color:#fff; font:inherit; font-size:14px;
+  padding:10px 6px; cursor:pointer; min-width:64px;
+}
+.camera-side-btn:disabled{ opacity:.4; cursor:default; }
+.camera-shutter-btn{
+  width:66px; height:66px; border-radius:50%; flex:none;
+  background:#fff; border:4px solid rgba(255,255,255,.4); cursor:pointer;
+}
+.camera-shutter-btn:active{ background:#ccc; }
+.camera-shutter-btn:disabled{ opacity:.4; cursor:default; }
+.camera-review-actions{
+  flex:none; display:flex; align-items:center; justify-content:center; gap:14px;
+  padding:16px 20px calc(16px + env(safe-area-inset-bottom, 0px));
+}
+.camera-review-actions .mbtn{ min-width:110px; }
 </style>
 </head>
 <body>
@@ -663,7 +729,7 @@ body.plan-fullscreen .plan-viewport{
     <div class="photo-gallery" id="photoGalleryEl"></div>
     <div class="actions-row">
       <button class="mbtn" id="addPhotoBtn">Add photo</button>
-      <input type="file" id="photoFileInput" accept="image/*" multiple capture="environment" style="display:none;">
+      <input type="file" id="photoFileInput" accept="image/*" multiple style="display:none;">
     </div>
 
     <div class="actions-row">
@@ -708,7 +774,7 @@ body.plan-fullscreen .plan-viewport{
       <div class="photo-gallery" id="reworkPhotoGalleryEl"></div>
       <div class="actions-row">
         <button class="mbtn" id="addReworkPhotoBtn">Add photo</button>
-        <input type="file" id="reworkPhotoFileInput" accept="image/*" multiple capture="environment" style="display:none;">
+        <input type="file" id="reworkPhotoFileInput" accept="image/*" multiple style="display:none;">
       </div>
       <div class="actions-row">
         <button class="mbtn mbtn-accent" id="addReworkEntryBtn">Add rework entry</button>
@@ -722,6 +788,42 @@ body.plan-fullscreen .plan-viewport{
 </main>
 
 <div id="toast"></div>
+
+<div class="modal-backdrop" id="photoSourceBackdrop" hidden>
+  <div class="modal-box share-choice-box" role="dialog" aria-modal="true" aria-labelledby="photoSourceLabel">
+    <p id="photoSourceLabel">Add photo from:</p>
+    <div class="share-choice-options">
+      <button type="button" class="share-choice-opt" id="photoSourceCameraBtn">
+        <span class="share-choice-title">Take photo</span>
+        <span class="share-choice-sub">Opens the camera right here in the app — won't crash the tab on a low-memory tablet</span>
+      </button>
+      <button type="button" class="share-choice-opt" id="photoSourceFileBtn">
+        <span class="share-choice-title">Choose file</span>
+        <span class="share-choice-sub">An existing photo from your gallery, or your device's own camera app</span>
+      </button>
+    </div>
+    <div class="modal-actions">
+      <button class="mbtn" id="photoSourceCancelBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="camera-backdrop" id="cameraBackdrop" hidden>
+  <div class="camera-stage">
+    <div class="camera-hint" id="cameraHint">Line up the shot, then tap the shutter</div>
+    <video id="cameraVideo" autoplay playsinline muted></video>
+    <canvas id="cameraCanvas" hidden></canvas>
+  </div>
+  <div class="camera-controls" id="cameraLiveControls">
+    <button type="button" class="camera-side-btn" id="cameraCancelBtn">Cancel</button>
+    <button type="button" class="camera-shutter-btn" id="cameraShutterBtn" aria-label="Take photo"></button>
+    <span class="camera-side-btn" style="visibility:hidden;">Cancel</span>
+  </div>
+  <div class="camera-review-actions" id="cameraReviewControls" hidden>
+    <button class="mbtn" id="cameraRetakeBtn">Retake</button>
+    <button class="mbtn mbtn-accent" id="cameraUseBtn">Use photo</button>
+  </div>
+</div>
 
 <div class="modal-backdrop" id="promptBackdrop" hidden>
   <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="promptLabel">
@@ -3543,13 +3645,12 @@ body.plan-fullscreen .plan-viewport{
       reworkPhotoGalleryEl.appendChild(cell);
     });
   }
-  document.getElementById("addReworkPhotoBtn").addEventListener("click", function(){
-    document.getElementById("reworkPhotoFileInput").click();
-  });
-  document.getElementById("reworkPhotoFileInput").addEventListener("change", function(e){
-    var input = e.target;
-    var files = Array.prototype.slice.call(input.files || []);
-    input.value = "";
+  // Photo source chooser + in-page camera capture (triggerAddPhotoFlow) is
+  // defined further below alongside the checklist's own "Add photo" --
+  // function declarations are hoisted, so this forward reference (and the
+  // reworkPhotoFileInput lookups just below) are fine, same as
+  // readAndCompressImageFile's own forward reference noted above.
+  function handleAddedReworkPhotoFiles(files){
     if (!files.length) return;
     Promise.all(files.map(function(f){ return readAndCompressImageFile(f).catch(function(){ return null; }); })).then(function(results){
       var added = 0;
@@ -3561,6 +3662,15 @@ body.plan-fullscreen .plan-viewport{
       if (added) renderReworkFormPhotoGallery();
       if (added < files.length) showToast("Some photos couldn't be added — try again.");
     });
+  }
+  document.getElementById("addReworkPhotoBtn").addEventListener("click", function(){
+    triggerAddPhotoFlow(document.getElementById("reworkPhotoFileInput"), handleAddedReworkPhotoFiles);
+  });
+  document.getElementById("reworkPhotoFileInput").addEventListener("change", function(e){
+    var input = e.target;
+    var files = Array.prototype.slice.call(input.files || []);
+    input.value = "";
+    handleAddedReworkPhotoFiles(files);
   });
   document.getElementById("addReworkEntryBtn").addEventListener("click", function(){
     if (!reworkState.data) return;
@@ -3983,7 +4093,6 @@ body.plan-fullscreen .plan-viewport{
   var signoffBlocks = Array.prototype.slice.call(document.querySelectorAll(".signoff-block"));
   var signaturePads = {}; // role -> pad
   var rowEls = []; // per-row DOM refs
-  var saveTimer = null;
   var dirty = false;
 
   // Build the 16 rows' DOM once; re-populated per item on load.
@@ -4093,6 +4202,162 @@ body.plan-fullscreen .plan-viewport{
       img.src = url;
     });
   }
+  /* ============================== photo source chooser + in-page camera capture (2026-09-25) ==============================
+     Andrew: "still very slow / unusable and crashed when taking a photo,
+     you fixed this in the site measure app." Root cause here is the exact
+     same one Site Measure's own v37 fix (2026-09-19) diagnosed: tapping
+     "Add photo" (accept="image/*" ... capture="environment") launched
+     Android's native Camera app as a separate foreground activity,
+     backgrounding this tab -- and on a memory-constrained onsite tablet,
+     Android can and does simply kill that backgrounded tab outright. When
+     the camera hands control back, Android does a full fresh page load
+     rather than resuming this tab's JS state, and the File System Access
+     folder permission this app needs to keep saving is NOT persisted
+     across a reload like that on Android (queryPermission() comes back
+     "prompt" again, and requestPermission() can't silently re-prompt
+     without a fresh user gesture) -- so the app lands back on "choose your
+     Projects folder" mid-checklist, which is exactly what reads as a
+     crash. No amount of autosave engineering on this side can fix that.
+     The only real fix, ported verbatim from Site Measure: stop leaving the
+     tab at all. This adds a genuine in-page camera capture (getUserMedia +
+     <video> + a canvas snapshot) that never loses foreground focus, so
+     there's nothing for Android to background or kill. "Add photo" now
+     asks which source to use (skipped entirely, falling straight back to
+     the old direct-to-picker behaviour, on any browser/device with no
+     camera capability at all). The existing OS file picker stays available
+     as "Choose file" -- now without the forced capture= attribute, since
+     it's the right tool for an EXISTING photo from the gallery; someone can
+     still pick "Camera" from that sheet if they really want to, it's just
+     no longer the only/default path for the common case of taking a fresh
+     photo. Every photo, from either source, still goes through the exact
+     same readAndCompressImageFile() downscale-to-JPEG pipeline above.
+     `triggerAddPhotoFlow` is shared by BOTH photo-add buttons in this app --
+     this checklist's own "Add photo" AND the rework tracker's "Add photo"
+     (see handleAddedReworkPhotoFiles above, which already forward-
+     references it). */
+  var CAMERA_CAPTURE_SUPPORTED = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  var CAMERA_CAPTURE_MAX_DIM = 2400; // readAndCompressImageFile downscales again to 1600px/q0.82 right after -- this just keeps the raw canvas snapshot from a 12MP+ tablet camera from being needlessly huge before that
+  var photoSourceBackdrop = document.getElementById("photoSourceBackdrop");
+  var photoSourceResolve = null;
+  function openPhotoSourceChoice(){
+    photoSourceBackdrop.hidden = false;
+    return new Promise(function(resolve){ photoSourceResolve = resolve; });
+  }
+  function closePhotoSourceChoice(mode){
+    photoSourceBackdrop.hidden = true;
+    var resolve = photoSourceResolve; photoSourceResolve = null;
+    if (resolve) resolve(mode);
+  }
+  document.getElementById("photoSourceCameraBtn").addEventListener("click", function(){ closePhotoSourceChoice("camera"); });
+  document.getElementById("photoSourceFileBtn").addEventListener("click", function(){ closePhotoSourceChoice("file"); });
+  document.getElementById("photoSourceCancelBtn").addEventListener("click", function(){ closePhotoSourceChoice(null); });
+  photoSourceBackdrop.addEventListener("click", function(e){ if (e.target === photoSourceBackdrop) closePhotoSourceChoice(null); });
+
+  var cameraBackdrop = document.getElementById("cameraBackdrop");
+  var cameraVideo = document.getElementById("cameraVideo");
+  var cameraCanvas = document.getElementById("cameraCanvas");
+  var cameraLiveControls = document.getElementById("cameraLiveControls");
+  var cameraReviewControls = document.getElementById("cameraReviewControls");
+  var cameraShutterBtn = document.getElementById("cameraShutterBtn");
+  var cameraCancelBtn = document.getElementById("cameraCancelBtn");
+  var cameraRetakeBtn = document.getElementById("cameraRetakeBtn");
+  var cameraUseBtn = document.getElementById("cameraUseBtn");
+  var cameraStream = null;
+  var cameraResolve = null;
+  function stopCameraStream(){
+    if (cameraStream){
+      cameraStream.getTracks().forEach(function(t){ t.stop(); });
+      cameraStream = null;
+    }
+    cameraVideo.srcObject = null;
+  }
+  function closeCameraCapture(blob){
+    stopCameraStream();
+    cameraBackdrop.hidden = true;
+    cameraVideo.hidden = false;
+    cameraCanvas.hidden = true;
+    cameraLiveControls.hidden = false;
+    cameraReviewControls.hidden = true;
+    var resolve = cameraResolve; cameraResolve = null;
+    if (resolve) resolve(blob || null);
+  }
+  // Opens the in-page capture UI and resolves a JPEG Blob once the person
+  // taps "Use photo", or null if they cancel/it fails for any reason --
+  // callers treat null exactly like "cancelled the file picker" already does.
+  function openCameraCapture(){
+    if (!CAMERA_CAPTURE_SUPPORTED) return Promise.resolve(null);
+    cameraBackdrop.hidden = false;
+    cameraVideo.hidden = false;
+    cameraCanvas.hidden = true;
+    cameraLiveControls.hidden = false;
+    cameraReviewControls.hidden = true;
+    cameraShutterBtn.disabled = false;
+    return navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } },
+      audio: false
+    }).then(function(stream){
+      cameraStream = stream;
+      cameraVideo.srcObject = stream;
+      return new Promise(function(resolve){ cameraResolve = resolve; });
+    }).catch(function(err){
+      console.error("Camera access failed:", err);
+      cameraBackdrop.hidden = true;
+      var msg = (err && (err.name === "NotAllowedError" || err.name === "PermissionDeniedError"))
+        ? "Camera access was blocked — check the site's camera permission, or use “Choose file” instead."
+        : "Couldn't open the camera — use “Choose file” instead.";
+      showToast(msg);
+      return null;
+    });
+  }
+  cameraShutterBtn.addEventListener("click", function(){
+    var vw = cameraVideo.videoWidth, vh = cameraVideo.videoHeight;
+    if (!vw || !vh) return;
+    var scale = Math.min(1, CAMERA_CAPTURE_MAX_DIM / Math.max(vw, vh));
+    cameraCanvas.width = Math.round(vw * scale);
+    cameraCanvas.height = Math.round(vh * scale);
+    cameraCanvas.getContext("2d").drawImage(cameraVideo, 0, 0, cameraCanvas.width, cameraCanvas.height);
+    // Freeze on the still frame while reviewing -- stopping the live stream
+    // here rather than only on final close means the tablet isn't holding
+    // an active camera sensor open a moment longer than it needs to.
+    stopCameraStream();
+    cameraVideo.hidden = true;
+    cameraCanvas.hidden = false;
+    cameraLiveControls.hidden = true;
+    cameraReviewControls.hidden = false;
+  });
+  cameraRetakeBtn.addEventListener("click", function(){
+    cameraCanvas.hidden = true;
+    cameraVideo.hidden = false;
+    cameraLiveControls.hidden = false;
+    cameraReviewControls.hidden = true;
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false })
+      .then(function(stream){ cameraStream = stream; cameraVideo.srcObject = stream; })
+      .catch(function(){ closeCameraCapture(null); showToast("Couldn't reopen the camera — use “Choose file” instead."); });
+  });
+  cameraUseBtn.addEventListener("click", function(){
+    cameraCanvas.toBlob(function(blob){ closeCameraCapture(blob); }, "image/jpeg", 0.9);
+  });
+  cameraCancelBtn.addEventListener("click", function(){ closeCameraCapture(null); });
+  // Shared entry point for every "Add photo" button in this app: `fileInput`
+  // is the existing OS-picker <input type="file">, `onFiles` is called with
+  // an array of File/Blob objects however they were obtained (camera or
+  // picker) -- exactly what each existing 'change' handler already expects,
+  // so both paths feed the same downstream compress/store pipeline
+  // (readAndCompressImageFile) unchanged.
+  function triggerAddPhotoFlow(fileInput, onFiles){
+    if (!CAMERA_CAPTURE_SUPPORTED){
+      fileInput.click();
+      return;
+    }
+    openPhotoSourceChoice().then(function(mode){
+      if (mode === "file"){
+        fileInput.click();
+      } else if (mode === "camera"){
+        openCameraCapture().then(function(blob){ if (blob) onFiles([blob]); });
+      }
+    });
+  }
+
   var addPhotoBtn = document.getElementById("addPhotoBtn");
   var photoFileInput = document.getElementById("photoFileInput");
   var photoGalleryEl = document.getElementById("photoGalleryEl");
@@ -4117,10 +4382,7 @@ body.plan-fullscreen .plan-viewport{
       photoGalleryEl.appendChild(cell);
     });
   }
-  addPhotoBtn.addEventListener("click", function(){ photoFileInput.click(); });
-  photoFileInput.addEventListener("change", function(){
-    var files = Array.prototype.slice.call(photoFileInput.files || []);
-    photoFileInput.value = "";
+  function handleAddedPhotoFiles(files){
     if (!files.length || !state.currentData) return;
     Promise.all(files.map(function(f){ return readAndCompressImageFile(f).catch(function(){ return null; }); })).then(function(results){
       var added = 0;
@@ -4135,15 +4397,43 @@ body.plan-fullscreen .plan-viewport{
       }
       if (added < files.length) showToast("Some photos couldn't be added — try again.");
     });
+  }
+  addPhotoBtn.addEventListener("click", function(){ triggerAddPhotoFlow(photoFileInput, handleAddedPhotoFiles); });
+  photoFileInput.addEventListener("change", function(){
+    var files = Array.prototype.slice.call(photoFileInput.files || []);
+    photoFileInput.value = "";
+    handleAddedPhotoFiles(files);
   });
 
+  // Autosave REMOVED (2026-09-25). Andrew, after the photo-capture crash
+  // fix above: "stop the auto save. we can reimplement it later, just make
+  // sure we save on exit with a button." markDirty() used to arm a 900ms
+  // debounce timer that called flushPendingSave() after every single edit
+  // -- which, per this same day's earlier investigation, meant rewriting
+  // the ENTIRE checklist JSON (including every attached photo's base64
+  // data) that often, a real and ongoing cost independent of the PDF
+  // auto-export bug fixed earlier today. markDirty() now only sets the
+  // flag; nothing schedules a save on its own any more. Saving still
+  // happens on every "exit" path exactly as it already did before this
+  // change -- the explicit Save button (below), and leaving the checklist
+  // screen at all (back link, switching items), which was already fully
+  // guarded by the "Save changes before leaving?" dialog
+  // (leaveChecklistScreenTo/showLeaveConfirm further down) whenever `dirty`
+  // is true. Neither of those needed to change: this is a one-line
+  // removal, not a rebuild. Trade-off, stated plainly since it's now real:
+  // an edit made between saves that's never explicitly saved (a crash, a
+  // battery death, force-closing the app) is lost, where autosave used to
+  // catch most of that within 900ms. Andrew's own call, with "reimplement
+  // later" as the explicit intent -- if periodic autosave comes back, it
+  // should write only the parts that changed rather than the whole file
+  // every time, per the note on writeChecklistFile below. This app's
+  // separate rework-tracker save path (writeReworkFile/syncReworkPdf) was
+  // never on a timer to begin with -- it already only wrote on explicit
+  // actions (add/delete/receive an entry) -- so nothing there changes.
   function markDirty(){
     dirty = true;
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(flushPendingSave, 900);
   }
   function flushPendingSave(){
-    clearTimeout(saveTimer);
     if (!dirty || !state.currentData || !state.currentFileHandle) return Promise.resolve();
     dirty = false;
     var fileName = state.currentFileHandle.name;
@@ -4280,7 +4570,7 @@ body.plan-fullscreen .plan-viewport{
     genericConfirm("Delete the checklist for “" + state.currentJoineryNo + "”? This can't be undone.").then(function(ok){
       if (!ok) return;
       var fileName = state.currentFileHandle.name;
-      clearTimeout(saveTimer); dirty = false;
+      dirty = false;
       state.itpRoomHandle.removeEntry(fileName).then(function(){
         showToast("Deleted “" + state.currentJoineryNo + "”.");
         return populateItemList();
@@ -4738,12 +5028,15 @@ body.plan-fullscreen .plan-viewport{
 
   // The Checklist screen's one and only way out (its "back-link", styled
   // like every other screen's back link) -- guarded by the dialog above
-  // whenever a real edit is still unsaved (the same `dirty` flag autosave
-  // already tracks), so leaving never silently discards or silently saves
-  // without the user choosing to. When nothing's unsaved (the common
-  // case, since autosave usually already caught up) it just goes straight
-  // back, no dialog needed. Landing spot either way is the joinery-items
-  // list for this room -- one level up from the checklist.
+  // whenever a real edit is still unsaved (the same `dirty` flag
+  // markDirty() sets), so leaving never silently discards or silently
+  // saves without the user choosing to. Since autosave was removed
+  // (2026-09-25, see markDirty's own comment), this dialog -- not a
+  // background timer -- is now the ONLY thing standing between an unsaved
+  // edit and it being lost. When nothing's unsaved (freshly opened, or
+  // already saved via the Save button) it just goes straight back, no
+  // dialog needed. Landing spot either way is the joinery-items list for
+  // this room -- one level up from the checklist.
   function leaveChecklistScreen(){
     if (!dirty){
       return populateItemList().then(function(){ showScreen("Items"); });
@@ -4751,7 +5044,6 @@ body.plan-fullscreen .plan-viewport{
     return showLeaveConfirm().then(function(choice){
       if (choice === "cancel") return; // stay put, nothing changes
       if (choice === "discard"){
-        clearTimeout(saveTimer);
         dirty = false; // pending edit is being thrown away, not saved
         return populateItemList().then(function(){ showScreen("Items"); });
       }
@@ -4772,8 +5064,11 @@ body.plan-fullscreen .plan-viewport{
   }
 
   window.addEventListener("beforeunload", function(){
-    // Best-effort only -- a synchronous flush isn't possible here, but this
-    // at least stops a stale timer from firing after the page is gone.
+    // Best-effort only (a synchronous flush isn't possible in this event),
+    // but worth keeping now that autosave is gone (2026-09-25): this is the
+    // one remaining save-on-exit path that fires even if the tab is closed
+    // or reloaded directly, bypassing the in-app leave-confirm dialog
+    // entirely (which only guards navigating within the app itself).
     if (dirty) flushPendingSave();
   });
 })();
