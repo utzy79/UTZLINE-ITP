@@ -1435,8 +1435,8 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
       case "installed": return "🏆";
       case "delivered": return "🚚";
       case "manufactured": return "📦";
-      case "machined": return "⚙️";
-      case "in_manufacture": return "🏭";
+      case "machined": return "🪚";
+      case "in_manufacture": return "🔨";
       case "measured": return "📏";
       default: return "";
     }
@@ -1450,8 +1450,8 @@ img, svg, canvas{ -webkit-user-drag:none; -webkit-touch-callout:none; user-selec
     if (rec.status === "installed") return "🏆";
     if (rec.status === "delivered") return "🚚";
     if (rec.status === "manufactured") return "📦";
-    if (rec.status === "machined") return "⚙️";
-    if (rec.status === "in_manufacture") return "🏭";
+    if (rec.status === "machined") return "🪚";
+    if (rec.status === "in_manufacture") return "🔨";
     if (rec.jobNote) return "🛠️";
     if (rec.status === "measured") return "📏";
     return "";
